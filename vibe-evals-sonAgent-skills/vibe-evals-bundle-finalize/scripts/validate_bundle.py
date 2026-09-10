@@ -41,6 +41,23 @@ def safe_relative(value: str) -> bool:
     return not win.is_absolute() and not win.drive and not posix.is_absolute() and ".." not in posix.parts
 
 
+def normalize_round(value: Any) -> int | None:
+    """Return the canonical positive integer for supported round spellings."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 1 else None
+    if isinstance(value, str):
+        match = re.fullmatch(r"[Rr]?([1-9]\d*)", value.strip())
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def rubric_round(rubric: dict) -> int | None:
+    return rubric.get("_normalized_round", rubric.get("_bundle_round"))
+
+
 def walk_paths(value: Any, key: str = "") -> Iterable[tuple[str, str]]:
     if isinstance(value, dict):
         for child_key, child in value.items():
@@ -127,6 +144,7 @@ def load_rubrics(root: Path, manifest: dict, errors: list[dict]) -> dict[str, di
     result: dict[str, dict] = {}
     for entry in manifest.get("inputs", {}).get("rubrics", []):
         relative = entry.get("path", "")
+        bundle_round = normalize_round(entry.get("round"))
         if not safe_relative(relative):
             continue
         value = read_json(root / PurePosixPath(relative), errors)
@@ -148,9 +166,18 @@ def load_rubrics(root: Path, manifest: dict, errors: list[dict]) -> dict[str, di
             if rubric_id in result:
                 errors.append(issue("RUBRIC_ID_DUPLICATE", f"Duplicate rubric id {rubric_id}", relative))
                 continue
-            if "round" in item and item.get("round") != entry.get("round"):
+            source_round = normalize_round(item.get("round")) if "round" in item else bundle_round
+            if "round" in item and source_round is None:
+                errors.append(issue("RUBRIC_ROUND_INVALID", f"{rubric_id} declares an unsupported round {item.get('round')!r}", relative))
+            elif source_round != bundle_round:
                 errors.append(issue("RUBRIC_ROUND_SOURCE_MISMATCH", f"{rubric_id} declares a round different from its rubric file", relative))
-            result[rubric_id] = {**item, "_bundle_round": entry.get("round"), "_source_file": relative, "_source_index": source_index}
+            result[rubric_id] = {
+                **item,
+                "_normalized_round": source_round if source_round is not None else bundle_round,
+                "_bundle_round": bundle_round,
+                "_source_file": relative,
+                "_source_index": source_index,
+            }
     return result
 
 
@@ -167,7 +194,7 @@ def validate_index(root: Path, rubrics: dict[str, dict], errors: list[dict]) -> 
         errors.append(issue("RUBRIC_INDEX_COVERAGE", "Rubric index IDs differ from baseline", "inputs/rubric-index.json"))
     for rubric_id, rubric in rubrics.items():
         row = by_id.get(rubric_id, {})
-        expected_round = rubric.get("round", rubric.get("_bundle_round"))
+        expected_round = rubric_round(rubric)
         if row.get("criterion") != rubric.get("criterion") or row.get("round") != expected_round:
             errors.append(issue("RUBRIC_INDEX_DRIFT", f"Index drift for {rubric_id}", "inputs/rubric-index.json"))
         expected_criterion_digest = hashlib.sha256(str(rubric.get("criterion", "")).encode("utf-8")).hexdigest()
@@ -416,7 +443,8 @@ def validate_bundle(bundle_path: str | Path, require_seal: bool = True) -> dict[
     rubric_entries = manifest.get("inputs", {}).get("rubrics", [])
     entry_rounds = [item.get("round") for item in rubric_entries if isinstance(item, dict)]
     expected_rounds = list(range(1, len(rubric_entries) + 1))
-    if sorted(entry_rounds) != expected_rounds or manifest.get("task", {}).get("round_count") != len(rubric_entries):
+    entry_rounds_are_canonical = all(isinstance(value, int) and not isinstance(value, bool) and value >= 1 for value in entry_rounds)
+    if not entry_rounds_are_canonical or sorted(value for value in entry_rounds if isinstance(value, int) and not isinstance(value, bool)) != expected_rounds or manifest.get("task", {}).get("round_count") != len(rubric_entries):
         errors.append(issue("ROUND_COUNT_MISMATCH", "Rubric rounds must be unique/continuous and equal task.round_count", "MANIFEST.json"))
     validate_index(root, rubrics, errors)
     validate_semantic_inputs(root, manifest, rubrics, errors)
@@ -575,7 +603,7 @@ def validate_bundle(bundle_path: str | Path, require_seal: bool = True) -> dict[
             if not rubric:
                 errors.append(issue("RUBRIC_REFERENCE_MISSING", f"Unknown rubric {rubric_id}", model_dir))
                 continue
-            expected_round = rubric.get("round", rubric.get("_bundle_round"))
+            expected_round = rubric_round(rubric)
             if row.get("rubric_round") != expected_round:
                 errors.append(issue("RUBRIC_ROUND_MISMATCH", f"{rubric_id} must use round {expected_round}", model_dir))
             if row.get("model_id") != model_id or row.get("criterion") != rubric.get("criterion"):

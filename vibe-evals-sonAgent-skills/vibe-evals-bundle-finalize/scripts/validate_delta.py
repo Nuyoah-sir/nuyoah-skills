@@ -10,7 +10,7 @@ import re
 import sys
 from pathlib import Path, PurePosixPath
 
-from validate_bundle import EVIDENCE_TYPES, DIRECTIONS, load_run_ids, safe_relative, sha256, validate_bundle
+from validate_bundle import EVIDENCE_TYPES, DIRECTIONS, load_run_ids, normalize_round, safe_relative, sha256, validate_bundle
 
 STATUSES = {"fulfilled", "partial", "unresolved"}
 REASONS = {"evidence_collected", "partial_evidence", "no_isolation", "requires_human_ruling", "method_not_allowed", "not_found"}
@@ -49,7 +49,7 @@ def validate_delta(delta_dir: str | Path, base_dir: str | Path, requests_path: s
     for entry in manifest["inputs"]["rubrics"]:
         for item in json.loads((base / entry["path"]).read_text(encoding="utf-8")):
             rubric_ids.add(item["id"])
-            rubric_rounds[item["id"]] = item.get("round", entry["round"])
+            rubric_rounds[item["id"]] = normalize_round(item.get("round", entry["round"]))
     for model_id, model in model_map.items():
         model_root = base / model["directory"]
         inv = json.loads((model_root / "inventory.json").read_text(encoding="utf-8"))

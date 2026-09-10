@@ -6,6 +6,8 @@
 
 包含 task、generator、source_input_digest、inputs.prompt、inputs.rubrics[]、models[]、package_status、missing_materials、warnings。rubric 条目包含 round、path、count、sha256。所有包内路径使用 `/` 相对路径，禁止盘符、绝对路径、`..` 和符号链接。
 
+题包原始 rubric 项的 `round` 允许正整数（如 `1`）、`R`/`r` 前缀字符串（如 `"R1"`、`"r1"`）或纯数字字符串（如 `"1"`）。初始化与校验时只在内存和生成元数据中规范化为正整数；复制进 `inputs/rubrics/` 的原始 JSON 必须保持字节一致。`MANIFEST.json`、`rubric-index.json`、`rubric-evidence.jsonl` 及证据对象中的轮次一律使用正整数。无法识别、非正数或与所在 rubric 文件轮次不符时必须报错，禁止猜测。
+
 `source-freeze.json` 的 input_digest 必须等于 manifest，source_inventory 覆盖探测到的 prompt、rubrics、记录、对话、所有模型产物和轮次快照。它还冻结 prompt、记录、各轮 rubric、模型最终目录、各轮快照和对话文件之间的唯一绑定；路径有多个合理候选时 discovery 必须失败，不能选“第一个”。补证前用它检测源变化。
 
 ## Prompt requirements

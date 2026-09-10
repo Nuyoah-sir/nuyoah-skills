@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 
 from discover_task_package import discover_task_package
+from validate_bundle import normalize_round
 
 
 def initialize_bundle(task_root: str | Path, discovery_path: str | Path, bundle_dir: str | Path) -> Path:
@@ -47,8 +48,14 @@ def initialize_bundle(task_root: str | Path, discovery_path: str | Path, bundle_
         values = json.loads(target.read_text(encoding="utf-8"))
         rubric_entries.append({"round": discovered["round"], "path": target.relative_to(bundle).as_posix(), "count": len(values), "sha256": discovered["sha256"]})
         for index, item in enumerate(values):
+            raw_round = item.get("round", discovered["round"])
+            normalized_round = normalize_round(raw_round)
+            if normalized_round is None:
+                raise ValueError(f"Rubric {item.get('id')!r} has an unsupported round {raw_round!r}")
+            if normalized_round != discovered["round"]:
+                raise ValueError(f"Rubric {item.get('id')!r} declares round {raw_round!r}, expected R{discovered['round']}")
             criterion = item["criterion"]
-            rubric_index.append({"id": item["id"], "round": item.get("round", discovered["round"]), "criterion": criterion, "criterion_sha256": hashlib.sha256(criterion.encode("utf-8")).hexdigest(), "source_file": target.relative_to(bundle).as_posix(), "source_index": index, "source_basis": [], "review": {"basis_status": "unreviewed"}})
+            rubric_index.append({"id": item["id"], "round": normalized_round, "criterion": criterion, "criterion_sha256": hashlib.sha256(criterion.encode("utf-8")).hexdigest(), "source_file": target.relative_to(bundle).as_posix(), "source_index": index, "source_basis": [], "review": {"basis_status": "unreviewed"}})
     (bundle / "inputs/rubric-index.json").write_text(json.dumps({"rubrics": rubric_index}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     prompt_rows = []
     for number, line in enumerate(prompt_source.read_text(encoding="utf-8").splitlines(), 1):

@@ -49,6 +49,26 @@ def write_discovery(task: Path, path: Path) -> dict:
 
 
 class InitializeAndVerifyTests(unittest.TestCase):
+    def test_initialize_normalizes_r_prefixed_round_only_in_generated_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task = make_task(root)
+            source_rubric = task / "示例题轮次记录/rubrics1.json"
+            values = json.loads(source_rubric.read_text(encoding="utf-8"))
+            values[0]["round"] = "R1"
+            source_rubric.write_text(json.dumps(values, ensure_ascii=False), encoding="utf-8")
+            discovery_path = root / "discovery.json"
+            write_discovery(task, discovery_path)
+
+            bundle = initialize_bundle(task, discovery_path, root / "bundle")
+
+            copied = json.loads((bundle / "inputs/rubrics/rubrics1.json").read_text(encoding="utf-8"))
+            index = json.loads((bundle / "inputs/rubric-index.json").read_text(encoding="utf-8"))
+            evidence = json.loads((bundle / "models/a/rubric-evidence.jsonl").read_text(encoding="utf-8"))
+            self.assertEqual("R1", copied[0]["round"])
+            self.assertEqual(1, index["rubrics"][0]["round"])
+            self.assertEqual(1, evidence["rubric_round"])
+
     def test_initialize_creates_expected_bundle_structure(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

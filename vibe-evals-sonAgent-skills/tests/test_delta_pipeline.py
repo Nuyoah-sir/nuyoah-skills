@@ -14,7 +14,7 @@ from package_bundle import package_bundle, safe_extract_zip
 from package_delta import package_delta
 from prepare_local_review import prepare_local_review
 from validate_delta import validate_delta
-from tests.test_validate_bundle import APP_BLOB, APP_DIGEST, make_bundle, write_json
+from tests.test_validate_bundle import APP_BLOB, APP_DIGEST, make_bundle, set_source_rubric_round, write_json
 
 
 class DeltaPipelineTests(unittest.TestCase):
@@ -38,6 +38,7 @@ class DeltaPipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             bundle = make_bundle(root, "ready_for_local_review")
+            set_source_rubric_round(bundle, "R1")
             manifest = json.loads((bundle / "MANIFEST.json").read_text(encoding="utf-8"))
             evidence_path = bundle / "models/model-a/rubric-evidence.jsonl"
             row = json.loads(evidence_path.read_text(encoding="utf-8"))

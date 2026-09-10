@@ -20,7 +20,7 @@ Nuyoah 的个人 Agent Skills 仓库，用于存放、版本管理与跨机器�
 | `vibe-evals-son-evidence-supplement` | 第三方机器 | 严格按本机 `evidence_requests.json` 补证，生成不可改写请求范围的 delta ZIP。 |
 | `vibe-evals-bundle-finalize` | 本机 | 安全解压、重验、人工裁定、合并补证、生成 scored rubrics、报告、热力图和 V2.1 表单。 |
 
-套件同时提供 PowerShell 安装脚本、完整测试、协议说明和[最新可分发 ZIP v1.0.1](vibe-evals-sonAgent-skills/dist/vibe-evals-sonAgent-skills-v1.0.1.zip)。第三方机器无需把完整题包复制回本机；证据包保留源码原文字节、内容哈希、轮次绑定、测试脚本/日志、对话绑定和人工裁定审计链。
+套件同时提供 PowerShell 安装脚本、完整测试、协议说明和[最新可分发 ZIP v1.0.2](vibe-evals-sonAgent-skills/dist/vibe-evals-sonAgent-skills-v1.0.2.zip)。第三方机器无需把完整题包复制回本机；证据包保留源码原文字节、内容哈希、轮次绑定、测试脚本/日志、对话绑定和人工裁定审计链。v1.0.2 兼容题包 rubric 中数字轮次与 `"R1"/"R2"` 字符串轮次，并在不改原始 rubric 字节的前提下生成统一数字元数据。
 
 ```powershell
 # 第三方机器

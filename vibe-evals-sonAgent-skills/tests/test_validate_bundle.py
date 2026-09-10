@@ -119,7 +119,54 @@ def make_bundle(root: Path, status: str = "ready_for_form") -> Path:
     return bundle
 
 
+def set_source_rubric_round(bundle: Path, value) -> None:
+    rubric_path = bundle / "inputs/rubrics/rubrics1.json"
+    rubrics = json.loads(rubric_path.read_text(encoding="utf-8"))
+    rubrics[0]["round"] = value
+    rubric_path.write_text(json.dumps(rubrics, ensure_ascii=False, indent=2), encoding="utf-8")
+    rubric_digest = hashlib.sha256(rubric_path.read_bytes()).hexdigest()
+    rubric_size = rubric_path.stat().st_size
+
+    manifest_path = bundle / "MANIFEST.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["inputs"]["rubrics"][0].update({"sha256": rubric_digest, "count": len(rubrics)})
+
+    freeze_path = bundle / "source-freeze.json"
+    freeze = json.loads(freeze_path.read_text(encoding="utf-8"))
+    source_row = next(item for item in freeze["source_inventory"] if item["path"] == "source/rubrics1.json")
+    source_row.update({"sha256": rubric_digest, "size": rubric_size})
+    freeze["rubric_sources"][0].update({"sha256": rubric_digest, "size": rubric_size})
+    freeze["source_inventory_digest"] = inventory_digest(freeze["source_inventory"])
+    freeze["input_digest"] = identity_digest(
+        freeze["source_inventory_digest"], freeze["prompt_source"], freeze["rubric_sources"], freeze["model_sources"]
+    )
+    manifest["source_input_digest"] = freeze["input_digest"]
+    write_json(freeze_path, freeze)
+    write_json(manifest_path, manifest)
+
+
 class ValidateBundleTests(unittest.TestCase):
+    def test_accepts_r_prefixed_string_round_without_rewriting_source_rubric(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = make_bundle(Path(tmp))
+            set_source_rubric_round(bundle, "R1")
+            before = (bundle / "inputs/rubrics/rubrics1.json").read_bytes()
+
+            report = validate_bundle(bundle, require_seal=False)
+
+            self.assertEqual("pass", report["result"], report["errors"])
+            self.assertEqual(before, (bundle / "inputs/rubrics/rubrics1.json").read_bytes())
+
+    def test_rejects_unrecognized_round_text_without_crashing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = make_bundle(Path(tmp))
+            set_source_rubric_round(bundle, "round-one")
+
+            report = validate_bundle(bundle, require_seal=False)
+
+            self.assertEqual("fail", report["result"])
+            self.assertIn("RUBRIC_ROUND_INVALID", {item["code"] for item in report["errors"]})
+
     def test_accepts_minimal_valid_bundle(self):
         with tempfile.TemporaryDirectory() as tmp:
             report = validate_bundle(make_bundle(Path(tmp)), require_seal=False)

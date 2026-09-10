@@ -44,6 +44,8 @@ if ($LASTEXITCODE -ne 0) { throw '初始化失败；停止本批次' }
 
 只复制以下原始字节到包：`prompt.md`、选定 rubrics JSON、存在时的 `记录.txt`。不要重新排版或重存原文件。
 
+原 rubric 项里的 `round` 可写成正整数、`"R1"`/`"r1"` 或纯数字字符串。初始化器只在生成的 index、evidence 和 manifest 中规范化为正整数，复制的 rubric JSON 保持原字节；格式无法识别或与文件轮次冲突才停止。不要为迎合工具修改题包中的 `round` 字段。
+
 生成以下规范化文件：
 
 - `prompt-requirements.jsonl`：每轮每条显式要求、必要隐含要求或上下文一行。
