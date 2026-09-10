@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.invalid/vibe-evals/evidence-delta-v1.schema.json",
+  "title": "Vibe Evals Evidence Delta v1 DELTA.json",
+  "description": "Strict schema for DELTA.json. The reusable response definition under $defs describes each responses.jsonl row; validate_delta.py performs cross-file and base-bundle checks.",
+  "type": "object",
+  "required": ["schema", "schema_version", "delta_id", "base_package_id", "base_digest", "request_sha256", "source_input_digest", "request_ids", "response_count"],
+  "properties": {
+    "schema": {"const": "vibe-evals-evidence-delta"},
+    "schema_version": {"const": "1.0.0"},
+    "delta_id": {"$ref": "#/$defs/id"},
+    "base_package_id": {"$ref": "#/$defs/nonEmptyString"},
+    "base_digest": {"$ref": "#/$defs/sha256"},
+    "request_sha256": {"$ref": "#/$defs/sha256"},
+    "source_input_digest": {"$ref": "#/$defs/sha256"},
+    "request_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^REQ-[0-9]{3,}$"}},
+    "response_count": {"type": "integer", "minimum": 0},
+    "new_files": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256"],
+        "properties": {"path": {"$ref": "#/$defs/relativePath"}, "sha256": {"$ref": "#/$defs/sha256"}, "size": {"type": "integer", "minimum": 0}},
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    "nonEmptyString": {"type": "string", "minLength": 1},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "relativePath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"},
+    "evidenceItem": {"$ref": "evidence-row.schema.json#/$defs/evidenceItem"},
+    "proposedUpdate": {
+      "type": "object",
+      "properties": {
+        "suggested_score": {"type": ["integer", "null"], "enum": [0, 1, null]},
+        "reason_code": {"enum": ["implemented_and_verified", "implemented_static_only", "behavior_failed", "missing_implementation", "violates_explicit_constraint", "insufficient_evidence", "subjective_needs_human", "unsafe_to_test", "policy_ambiguous", "model_fallback_zero"]},
+        "coverage": {"enum": ["complete", "partial", "missing", "unsafe_to_test"]},
+        "confidence": {"enum": ["high", "medium", "low"]},
+        "fact_summary": {"$ref": "#/$defs/nonEmptyString"},
+        "limitations": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/nonEmptyString"}}
+      },
+      "minProperties": 1,
+      "additionalProperties": false
+    },
+    "response": {
+      "type": "object",
+      "required": ["request_id", "model_id", "rubric_id", "status", "reason_code", "new_evidence"],
+      "properties": {
+        "request_id": {"type": "string", "pattern": "^REQ-[0-9]{3,}$"},
+        "model_id": {"$ref": "#/$defs/id"},
+        "rubric_id": {"$ref": "#/$defs/id"},
+        "status": {"enum": ["fulfilled", "partial", "unresolved"]},
+        "reason_code": {"enum": ["evidence_collected", "partial_evidence", "no_isolation", "requires_human_ruling", "method_not_allowed", "not_found"]},
+        "new_evidence": {"type": "array", "items": {"$ref": "#/$defs/evidenceItem"}},
+        "proposed_update": {"$ref": "#/$defs/proposedUpdate"},
+        "limitations": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/nonEmptyString"}}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {"if": {"properties": {"status": {"const": "unresolved"}}, "required": ["status"]}, "then": {"properties": {"new_evidence": {"maxItems": 0}}, "not": {"required": ["proposed_update"]}}},
+        {"if": {"properties": {"status": {"const": "partial"}}, "required": ["status"]}, "then": {"properties": {"new_evidence": {"minItems": 1}}, "not": {"required": ["proposed_update"]}}},
+        {"if": {"properties": {"status": {"const": "fulfilled"}}, "required": ["status"]}, "then": {"properties": {"new_evidence": {"minItems": 1}}, "required": ["proposed_update"]}}
+      ]
+    }
+  }
+}

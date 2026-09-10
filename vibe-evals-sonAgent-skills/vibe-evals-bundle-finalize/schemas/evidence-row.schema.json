@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.invalid/vibe-evals/evidence-row-v1.schema.json",
+  "title": "Vibe Evals rubric-evidence.jsonl row v1",
+  "type": "object",
+  "required": ["model_id", "rubric_id", "rubric_round", "criterion", "disposition", "coverage", "suggested_score", "confidence", "reason_code", "fact_summary", "evidence", "human_check_needed", "adjudication_ids", "limitations"],
+  "properties": {
+    "model_id": {"$ref": "#/$defs/id"},
+    "rubric_id": {"$ref": "#/$defs/id"},
+    "rubric_round": {"type": "integer", "minimum": 1},
+    "criterion": {"$ref": "#/$defs/nonEmptyString"},
+    "disposition": {"enum": ["examined", "fallback_zero"]},
+    "coverage": {"enum": ["complete", "partial", "missing", "unsafe_to_test"]},
+    "suggested_score": {"type": ["integer", "null"], "enum": [0, 1, null]},
+    "confidence": {"enum": ["high", "medium", "low"]},
+    "reason_code": {"enum": ["implemented_and_verified", "implemented_static_only", "behavior_failed", "missing_implementation", "violates_explicit_constraint", "insufficient_evidence", "subjective_needs_human", "unsafe_to_test", "policy_ambiguous", "model_fallback_zero"]},
+    "fact_summary": {"$ref": "#/$defs/nonEmptyString"},
+    "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidenceItem"}},
+    "human_check_needed": {"type": "boolean"},
+    "adjudication_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^ADJ-[A-Za-z0-9._-]+$"}},
+    "limitations": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {"properties": {"suggested_score": {"type": "integer"}}, "required": ["suggested_score"]},
+      "then": {"properties": {"evidence": {"minItems": 1}}}
+    },
+    {
+      "if": {"properties": {"reason_code": {"enum": ["insufficient_evidence", "subjective_needs_human", "unsafe_to_test", "policy_ambiguous"]}}, "required": ["reason_code"]},
+      "then": {"properties": {"suggested_score": {"type": "null"}}}
+    },
+    {
+      "if": {"properties": {"disposition": {"const": "fallback_zero"}}, "required": ["disposition"]},
+      "then": {"properties": {"suggested_score": {"type": "null"}, "human_check_needed": {"const": true}, "reason_code": {"const": "model_fallback_zero"}}}
+    }
+  ],
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    "nonEmptyString": {"type": "string", "minLength": 1},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "relativePath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"},
+    "evidenceItem": {
+      "type": "object",
+      "required": ["evidence_id", "type", "direction", "fact"],
+      "properties": {
+        "evidence_id": {"type": "string", "pattern": "^EV-[A-Za-z0-9._-]+$"},
+        "type": {"enum": ["static_line", "self_test_run", "probe_run", "conversation", "human_note", "snapshot_diff", "inventory_fact"]},
+        "direction": {"enum": ["support", "refute", "confirm_missing", "context"]},
+        "fact": {"$ref": "#/$defs/nonEmptyString"},
+        "source_state": {"enum": ["round_end", "final"]},
+        "round": {"type": "integer", "minimum": 1},
+        "path": {"$ref": "#/$defs/relativePath"},
+        "line_start": {"type": "integer", "minimum": 1},
+        "line_end": {"type": "integer", "minimum": 1},
+        "file_sha256": {"$ref": "#/$defs/sha256"},
+        "source_blob_path": {"$ref": "#/$defs/relativePath"},
+        "excerpt": {"$ref": "#/$defs/nonEmptyString"},
+        "excerpt_sha256": {"$ref": "#/$defs/sha256"},
+        "run_id": {"$ref": "#/$defs/id"},
+        "msg_ref": {"$ref": "#/$defs/id"},
+        "flat_msg_index": {"type": "integer", "minimum": 0},
+        "role": {"enum": ["user", "assistant", "system", "tool"]},
+        "event_type": {"$ref": "#/$defs/nonEmptyString"},
+        "observation_id": {"$ref": "#/$defs/id"},
+        "quote": {"$ref": "#/$defs/nonEmptyString"},
+        "from_round": {"type": "integer", "minimum": 0},
+        "to_round": {"type": "integer", "minimum": 1},
+        "before_sha256": {"$ref": "#/$defs/sha256"},
+        "after_sha256": {"$ref": "#/$defs/sha256"},
+        "metric": {"$ref": "#/$defs/nonEmptyString"},
+        "value": {},
+        "basis": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {"if": {"properties": {"type": {"const": "static_line"}}, "required": ["type"]}, "then": {"required": ["source_state", "round", "path", "line_start", "line_end", "file_sha256", "source_blob_path", "excerpt"]}},
+        {"if": {"properties": {"type": {"enum": ["self_test_run", "probe_run"]}}, "required": ["type"]}, "then": {"required": ["run_id"]}},
+        {"if": {"properties": {"type": {"const": "conversation"}}, "required": ["type"]}, "then": {"required": ["msg_ref", "flat_msg_index", "role", "excerpt", "event_type"]}},
+        {"if": {"properties": {"type": {"const": "human_note"}}, "required": ["type"]}, "then": {"required": ["observation_id", "quote"]}},
+        {"if": {"properties": {"type": {"const": "snapshot_diff"}}, "required": ["type"]}, "then": {"required": ["from_round", "to_round", "path", "before_sha256", "after_sha256"]}},
+        {"if": {"properties": {"type": {"const": "inventory_fact"}}, "required": ["type"]}, "then": {"required": ["metric", "value", "basis"]}},
+        {"if": {"properties": {"type": {"const": "inventory_fact"}, "direction": {"const": "confirm_missing"}}, "required": ["type", "direction"]}, "then": {"required": ["source_state", "round", "path"], "properties": {"source_state": {"const": "round_end"}, "metric": {"const": "path_exists"}, "value": {"const": false}}}}
+      ]
+    }
+  }
+}

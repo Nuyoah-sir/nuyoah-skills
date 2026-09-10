@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Vibe Evals Human Decisions v1",
+  "type": "object",
+  "required": ["schema_version", "base_package_id", "rubric_scores"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "base_package_id": {"type": "string", "minLength": 1},
+    "material_gap_resolutions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["gap_id", "decision", "reason", "decided_by", "decider", "decided_at"],
+        "properties": {
+          "gap_id": {"type": "string", "minLength": 1},
+          "decision": {"const": "proceed_with_limitation"},
+          "reason": {"type": "string", "minLength": 1},
+          "decided_by": {"const": "human"},
+          "decider": {"type": "string", "minLength": 1},
+          "decided_at": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "adjudication_resolutions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["adjudication_id", "decided_by", "decider", "decided_at", "decision_source", "final_policy", "per_model_final_scores"],
+        "properties": {
+          "adjudication_id": {"type": "string", "minLength": 1},
+          "decided_by": {"const": "human"},
+          "decider": {"type": "string", "minLength": 1},
+          "decided_at": {"type": "string", "minLength": 1},
+          "decision_source": {"type": "string", "minLength": 1},
+          "final_policy": {"type": "string", "minLength": 1},
+          "per_model_final_scores": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "object", "minProperties": 1, "additionalProperties": {"enum": [0, 1]}}}
+        },
+        "additionalProperties": false
+      }
+    },
+    "local_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["evidence_id", "model_id", "rubric_id", "type", "observer", "observed_at", "steps", "expected_result", "observed_result", "observed_version"],
+        "properties": {
+          "evidence_id": {"type": "string", "pattern": "^LOCAL-"},
+          "model_id": {"type": "string", "minLength": 1},
+          "rubric_id": {"type": "string", "minLength": 1},
+          "type": {"const": "human_note"},
+          "observer": {"type": "string", "minLength": 1},
+          "observed_at": {"type": "string", "minLength": 1},
+          "steps": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+          "expected_result": {"type": "string", "minLength": 1},
+          "observed_result": {"type": "string", "minLength": 1},
+          "observed_version": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "rubric_scores": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "required": ["score", "reason", "evidence_ids", "decided_by"],
+          "properties": {
+            "score": {"enum": [0, 1]},
+            "reason": {"type": "string", "minLength": 1},
+            "evidence_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+            "decided_by": {"enum": ["human", "accepted_machine"]}
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

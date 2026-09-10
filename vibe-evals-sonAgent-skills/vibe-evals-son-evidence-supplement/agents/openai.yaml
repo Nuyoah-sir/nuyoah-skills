@@ -1,0 +1,4 @@
+interface:
+  display_name: "Vibe Evals Remote Evidence Supplement"
+  short_description: "Collect request-scoped delta evidence without changing the base bundle"
+  default_prompt: "Use $vibe-evals-son-evidence-supplement to answer the provided evidence requests and create a non-overwriting delta ZIP."

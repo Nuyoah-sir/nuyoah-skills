@@ -10,6 +10,28 @@ Nuyoah 的个人 Agent Skills 仓库，用于存放、版本管理与跨机器�
 | [vibe-evals-scoring](vibe-evals-scoring/SKILL.md) | Vibe Evals 打分流水线：并行子智能体证据收集 → 机器预打分 0/1 → 人工打分文档 → 人工回填复核 → 转录 `rubrics-{X}.json` → 反馈报告 + 打分热力图。 | 上游可选：vibe-evals-rubric-review |
 | [vibe-evals-vibe-form](vibe-evals-vibe-form/SKILL.md) | 按 V2.1 人评标准，从反馈报告 + 已评分 rubrics JSON 生成单文件多模型评分表单（机器预填建议值，全部标注"待人工确认"，最终以人工拍板为准）。 | 上游必需：vibe-evals-scoring 产物 |
 
+## 跨机器证据套件
+
+[vibe-evals-sonAgent-skills](vibe-evals-sonAgent-skills/安装与操作手册.md) 用于“题包留在第三方机器，本机只接收可信证据 ZIP”的工作方式，包含：
+
+| 技能 | 安装位置 | 作用 |
+| --- | --- | --- |
+| `vibe-evals-son-evidence-export` | 第三方机器 | 只读探测题包，冻结输入与轮次，逐模型取证，生成带校验和的 evidence bundle ZIP。 |
+| `vibe-evals-son-evidence-supplement` | 第三方机器 | 严格按本机 `evidence_requests.json` 补证，生成不可改写请求范围的 delta ZIP。 |
+| `vibe-evals-bundle-finalize` | 本机 | 安全解压、重验、人工裁定、合并补证、生成 scored rubrics、报告、热力图和 V2.1 表单。 |
+
+套件同时提供 PowerShell 安装脚本、完整测试、协议说明和可直接分发的 ZIP。第三方机器无需把完整题包复制回本机；证据包保留源码原文字节、内容哈希、轮次绑定、测试脚本/日志、对话绑定和人工裁定审计链。
+
+```powershell
+# 第三方机器
+.\vibe-evals-sonAgent-skills\install-third-party.ps1
+
+# 本机
+.\vibe-evals-sonAgent-skills\install-local.ps1
+```
+
+详细流程、状态含义和可复制提示词见[安装与操作手册](vibe-evals-sonAgent-skills/安装与操作手册.md)。
+
 ## 流水线关系
 
 ```
@@ -25,7 +47,7 @@ vibe-evals-scoring ────────► 预打分.md → 人工打分文�
 vibe-evals-vibe-form ──────► {题}-评分表单.md（V2.1 人评表单）
 ```
 
-三个技能各自可独立触发，也可以按上述顺序串成一条完整的人评流水线。
+原有三个技能各自可独立触发，也可以按上述顺序串成一条完整的人评流水线；跨机器场景优先使用上面的证据套件。
 
 ## 目录结构
 

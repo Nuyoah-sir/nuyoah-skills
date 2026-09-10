@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0.0",
+  "base_package_id": "替换为MANIFEST.package_id",
+  "task": {
+    "ranking_reason": "先按总体印象；同分时按同一组 Rubric 总分决胜。",
+    "maximum_difference": "替换为有证据的最大差异；单模型时写无同场比较。",
+    "capability_boundary": "替换为证据暴露的能力边界。",
+    "difficulty_and_approach": "替换为题目难点与验收思路。",
+    "evidence_refs": {
+      "ranking_reason": ["替换为任一模型真实EV或LOCAL证据ID"],
+      "maximum_difference": ["替换为任一模型真实EV或LOCAL证据ID"],
+      "capability_boundary": ["替换为任一模型真实EV或LOCAL证据ID"],
+      "difficulty_and_approach": ["替换为任一模型真实EV或LOCAL证据ID"]
+    }
+  },
+  "models": {
+    "替换为model_id": {
+      "overall_impression": 3,
+      "dimensions": {
+        "G1": {"score": 3, "basis": "替换为显式约束 rubric 事实。"},
+        "G2": {"score": 3, "basis": "替换为功能 rubric 与 4W1H 事实。"},
+        "G3": {"score": 3, "basis": "替换为对话中的收敛轨迹；不可得时据实说明。"},
+        "S1": {"applicable": false, "basis": "纯后端任务，无可视界面。"},
+        "A1": {"applicable": false, "basis": "当前 V2.1 本地政策不启用 A1。"},
+        "R1": {"applicable": false, "basis": "首轮未提出澄清问题。"}
+      },
+      "pros": ["替换为亮点事实与 rubric 引用。", "替换为第二条亮点事实。"],
+      "cons": ["替换为缺陷事实与 rubric 引用；必须有 refute 或 confirm_missing 证据。"],
+      "style": "替换为相对独特的风格指纹。",
+      "evidence_refs": {
+        "overall": ["替换为该模型真实EV或LOCAL证据ID"],
+        "dimensions": {"G1": ["替换"], "G2": ["替换"], "G3": ["替换"], "S1": [], "A1": [], "R1": []},
+        "pros": [["替换"], ["替换"]],
+        "cons": [["替换为该缺陷对应的refute或confirm_missing证据ID"]],
+        "style": ["替换"]
+      },
+      "labels": {"pros": [], "cons": [], "style": []}
+    }
+  }
+}
