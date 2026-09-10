@@ -40,6 +40,32 @@ class ToolTests(unittest.TestCase):
             self.assertFalse(result["ok"])
             self.assertIn("PROMPT_MISSING", {e["code"] for e in result["errors"]})
 
+    def test_discovery_ignores_prompt_copies_and_accepts_conversation_name_variant(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "PS-0819copy"
+            rounds = root / "PS-轮次记录"
+            model_output = root / "PS-模型输出" / "GLM5.2"
+            round_one = rounds / "R1" / "GLM5.2"
+            round_two = rounds / "R2" / "GLM5.2"
+            for directory in (model_output, round_one, round_two):
+                directory.mkdir(parents=True, exist_ok=True)
+                (directory / "prompt.md").write_text("第一轮副本", encoding="utf-8")
+                (directory / "result.txt").write_text("output", encoding="utf-8")
+            (rounds / "prompt.md").write_text("第一轮要求\n第二轮要求\n", encoding="utf-8")
+            (rounds / "rubrics1.json").write_text("[]", encoding="utf-8")
+            (rounds / "rubrics2.json").write_text("[]", encoding="utf-8")
+            conversation = rounds / "GLM5.2模型对话模型.json"
+            conversation.write_text(json.dumps({"schema": "codebuddy.conversation", "data": {"conversations": []}}, ensure_ascii=False), encoding="utf-8")
+
+            result = discover_task_package(root)
+
+            self.assertTrue(result["ok"], result["errors"])
+            self.assertEqual("PS-轮次记录/prompt.md", result["prompt"]["path"])
+            self.assertEqual("PS-轮次记录/GLM5.2模型对话模型.json", result["model_source_bindings"]["glm5-2"]["conversation_source_path"])
+            warning_codes = {item["code"] for item in result["warnings"]}
+            self.assertIn("PROMPT_COPIES_IGNORED", warning_codes)
+            self.assertIn("CONVERSATION_NONSTANDARD_NAME", warning_codes)
+
     def test_safe_extract_rejects_zip_traversal(self):
         import zipfile
 

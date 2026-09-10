@@ -112,11 +112,24 @@ def discover_task_package(task_root: str | Path) -> dict:
     if not root.is_dir():
         return {"ok": False, "task_root": str(root), "errors": [{"code": "TASK_ROOT_MISSING", "message": "Task root is not a directory"}], "warnings": []}
 
-    prompts = sorted(root.glob("**/prompt.md"))
+    all_prompts = sorted(path for path in root.glob("**/prompt.md") if path.is_file())
+    generated_context_dirs = [
+        path for path in root.glob("**/*模型输出") if path.is_dir()
+    ] + [
+        path for path in root.glob("**/R[0-9]*") if path.is_dir() and re.fullmatch(r"R\d+", path.name, re.IGNORECASE)
+    ]
+    ignored_prompts = [path for path in all_prompts if any(directory in path.parents for directory in generated_context_dirs)]
+    prompts = [path for path in all_prompts if path not in ignored_prompts]
     prompt = prompts[0] if len(prompts) == 1 else None
     if not prompt:
         code = "PROMPT_MISSING" if not prompts else "PROMPT_AMBIGUOUS"
-        errors.append({"code": code, "message": "Exactly one prompt.md is required", "candidates": [p.relative_to(root).as_posix() for p in prompts]})
+        errors.append({"code": code, "message": "Exactly one authoritative prompt.md outside model outputs and Rn snapshots is required", "candidates": [p.relative_to(root).as_posix() for p in prompts]})
+    if ignored_prompts:
+        warnings.append({
+            "code": "PROMPT_COPIES_IGNORED",
+            "message": "prompt.md copies inside model outputs or Rn snapshots were excluded from authoritative prompt selection",
+            "candidates": [path.relative_to(root).as_posix() for path in ignored_prompts],
+        })
 
     rubric_candidates = [p for p in root.glob("**/*rubrics*.json") if p.is_file()]
     by_round: dict[int, list[Path]] = {}
@@ -154,7 +167,14 @@ def discover_task_package(task_root: str | Path) -> dict:
         if not models:
             errors.append({"code": "MODEL_OUTPUT_EMPTY", "message": "Model output directory has no model subdirectories"})
 
-    conversation_files = sorted(root.glob("**/*模型对话记录.json"))
+    conversation_files = sorted(path for path in root.glob("**/*模型对话*.json") if path.is_file())
+    for conversation in conversation_files:
+        if not conversation.name.endswith("模型对话记录.json"):
+            warnings.append({
+                "code": "CONVERSATION_NONSTANDARD_NAME",
+                "message": "Conversation JSON was recognized by the broader *模型对话*.json rule",
+                "path": conversation.relative_to(root).as_posix(),
+            })
     snapshots = sorted(p for p in root.glob("**/R[0-9]*") if p.is_dir())
     records = sorted(root.glob("**/记录.txt"))
     if not conversation_files:
