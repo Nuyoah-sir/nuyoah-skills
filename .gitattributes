@@ -1,0 +1,9 @@
+# 统一以 LF 存储，跨平台（Windows / macOS / Linux）取用时行为一致
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.zip binary

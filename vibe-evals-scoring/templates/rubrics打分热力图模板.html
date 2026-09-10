@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>{题目名} — Rubric 打分热力图（{批次标识} 批次）</title>
+<!-- ============ 模板说明（生成器替换以下占位符后删除本注释） ============
+  占位符约定：{题目名} {批次标识} {日期} {总条数} {x} {y} {核查状态}
+  模型占位：模型 A / 模型 B（模型数变化时按「模板里写 N=2 的两模型表头即可」扩展：
+    ① thead 增加 <th>模型 C</th>…；② 表体每行增加一个 <td class="ok|bad"> 列；
+    ③ tr.group 的 colspan 改为 2 + 模型数；tfoot 合计行按模型数追加 <td class="ok">，合计标签单元格 colspan 保持 2；④ 分数卡区每模型一张 card）
+  N=1 特例：删除模型 B 分数卡；Rank 卡保留但写“单模型 / 无同场比较”；删除模型 B 表头、表体和合计列；tr.group colspan 改为 3；不得保留 A>B、分差、并列等比较性占位符。
+  数据来源：{得分A/B}、{比例A/B}、Rank 结论与分差条目说明直接取自 Phase 4 的 rubrics-{X}.json 与 Phase 5 反馈报告，不另行计算。
+  {核查状态} 取值如“分数经打分人核查通过”；{x}/{y} 分别为 rubrics1.json / rubrics2.json 的条目数。
+  ==================================================================== -->
+<style>
+  body { font-family: "Microsoft YaHei", "Segoe UI", sans-serif; background: #0d0d1a; color: #e8e8f0; margin: 24px; }
+  h1 { font-size: 22px; border-left: 4px solid #9c6bff; padding-left: 12px; }
+  .meta { color: #9aa; font-size: 13px; margin-bottom: 16px; }
+  .cards { display: flex; gap: 16px; flex-wrap: wrap; margin: 16px 0; }
+  .card { background: #17172a; border: 1px solid #33334d; border-radius: 10px; padding: 14px 22px; min-width: 190px; }
+  .card .name { font-size: 15px; color: #9c6bff; font-weight: bold; }
+  .card .score { font-size: 26px; font-weight: bold; margin-top: 4px; }
+  .card .sub { font-size: 12px; color: #9aa; }
+  table { border-collapse: collapse; width: 100%; margin-top: 16px; font-size: 13px; }
+  th, td { border: 1px solid #2a2a40; padding: 6px 10px; vertical-align: middle; }
+  th { background: #1c1c30; color: #cfd; position: sticky; top: 0; }
+  td.ok { background: #15582e; color: #d8ffd8; text-align: center; font-weight: bold; }
+  td.bad { background: #8f1d16; color: #ffd8d8; text-align: center; font-weight: bold; }
+  tr.group td { background: #20203a; color: #9c9cff; font-weight: bold; }
+  tr:hover td { filter: brightness(1.25); }
+  .rid { color: #7cc; white-space: nowrap; }
+  .crit { max-width: 640px; }
+  tfoot td { background: #14142a; font-weight: bold; text-align: center; }
+  .legend { margin-top: 14px; font-size: 13px; color: #bbc; }
+  .legend span.ok { background: #15582e; padding: 2px 8px; border-radius: 4px; }
+  .legend span.bad { background: #8f1d16; padding: 2px 8px; border-radius: 4px; }
+  .note { margin-top: 10px; font-size: 13px; color: #aab; line-height: 1.7; }
+</style>
+</head>
+<body>
+<h1>{题目名} — Rubric 打分热力图（{批次标识} 批次）</h1>
+<div class="meta">评测日期：{日期} ｜ Rubric 共 {总条数} 条（rubrics1.json {x} 条 + rubrics2.json {y} 条）｜ 每条 1 分、0/1 二值、<b>无权重</b> ｜ 总体分 = 得分 / {总条数} ｜ {核查状态}</div>
+<div class="cards">
+  <!-- 每模型一张 card：name=模型名、score={得分} / {总条数} = {比例}、sub=扣分条目列表 -->
+  <div class="card"><div class="name">模型 A</div><div class="score" style="color:#5fe08a;">{得分A} / {总条数} = {比例A}</div><div class="sub">扣分：{条目列表，如 R1-08（动画期丢键）}</div></div>
+  <div class="card"><div class="name">模型 B</div><div class="score" style="color:#5fd0e0;">{得分B} / {总条数} = {比例B}</div><div class="sub">扣分：{条目列表，如 R1-08（动画期丢键）、R2-01（第三关左侧目标偏 42°）}</div></div>
+  <!-- Rank 卡：N≥2 时 {A > B} 为排序结论，sub 写分差条目说明（如：分差条目：仅 R2-01（B=0 / A=1），其余 {N} 条同判）；N=1 时 score 写“单模型”，sub 写“无同场比较/无排序”。 -->
+  <div class="card"><div class="name">Rank</div><div class="score">{A &gt; B}</div><div class="sub">{分差条目说明}</div></div>
+</div>
+<table>
+  <thead>
+    <!-- 列数 = 2 + 模型数；模型数变化时在此增删 <th> -->
+    <tr><th style="width:60px">ID</th><th>条目（criterion）</th><th>模型 A</th><th>模型 B</th></tr>
+  </thead>
+  <tbody>
+    <!-- 每轮一个分组行（colspan = 2 + 模型数），组内每条 rubric 一行：
+         <tr><td class="rid">{R{轮次}-{序号}}</td><td class="crit">{criterion}</td><td class="ok|bad">{0|1}</td>…（每模型一列）</tr>
+         td class 按模型取值：1 → class="ok"，0 → class="bad"。以下为示例行，生成时替换为真实数据。 -->
+<tr class="group"><td colspan="4">第{N}轮 R{N}（rubrics{N}.json · {x} 条）</td></tr><tr><td class="rid">{R1-01}</td><td class="crit">{条目原文 criterion}</td><td class="ok">{0|1}</td><td class="ok">{0|1}</td></tr><tr><td class="rid">{R1-02}</td><td class="crit">{条目原文 criterion}</td><td class="bad">{0|1}</td><td class="ok">{0|1}</td></tr><tr class="group"><td colspan="4">第{N}轮 R{N}（rubrics{N}.json · {y} 条）</td></tr><tr><td class="rid">{R2-01}</td><td class="crit">{条目原文 criterion}</td><td class="bad">{0|1}</td><td class="ok">{0|1}</td></tr>
+    <!-- … 继续逐条生成，直至行数与 rubric 总条数一致（交稿检查项） -->
+  </tbody>
+  <tfoot>
+    <tr><td colspan="2">合计</td><td class="ok">{得分A} / {总条数} = {比例A}</td><td class="ok">{得分B} / {总条数} = {比例B}</td></tr>
+  </tfoot>
+</table>
+<div class="legend"><span class="ok">1</span> = 满足（得分）　<span class="bad">0</span> = 不满足（扣分）　｜　每条 1 分，Must have / Nice to have 不参与加权（无权重，按用户建议）</div>
+<div class="note"><b>判分口径（{核查状态} {日期}）：</b><br>{逐条说明，如 ① … ② … ③ …}<br>{兜底规则：没有实现 prompt 重要实现（含无输出产物）即总体打 0 分——如本批不适用则注明}</div>
+</body>
+</html>
