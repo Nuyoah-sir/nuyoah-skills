@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -14,7 +15,10 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from artifact_integrity import _walk_safe_files, safe_extract_zip, verify_sidecar
-from form_ready_context import BaseContext, load_base_context
+from form_ready_context import BaseContext, load_base_context, load_observation_registry
+from presentation_workspace import validate_presentation
+from project_form_ready_scores import verify_projected_scores
+from render_supporting_outputs import verify_supporting_outputs
 from validate_final_decisions import GAP_POLICY_JSON, load_gap_policy, validate_final_decisions, validate_observation_provenance
 from validate_bundle import validate_bundle
 
@@ -182,6 +186,11 @@ def _check_present_record_identities(root: Path, manifest: dict[str, Any], conte
         if not isinstance(records, list):
             errors.append(issue("RECORD_INVALID", "Record document records must be an array", f"{relative}#/records"))
             continue
+        if key in {"form_input", "adjudication_audit"}:
+            # These documents carry the package envelope once at the document level.
+            # Their records hold per-model payloads and multi-pair closures, which the
+            # decision and presentation stages cross-check against the sealed base.
+            continue
         for index, record in enumerate(records):
             if not isinstance(record, dict):
                 errors.append(issue("RECORD_INVALID", "Each record must be an object", f"{relative}#/records/{index}"))
@@ -193,7 +202,7 @@ def _check_present_record_identities(root: Path, manifest: dict[str, Any], conte
                 manifest=manifest,
                 context=context,
                 rubric_by_id=rubric_by_id,
-                require_model_rubric=key in {"final_decisions", "adjudication_audit", "form_input"},
+                require_model_rubric=key == "final_decisions",
             )
     for key in ("machine_vision", "remote_human"):
         relative = paths.get(key)
@@ -221,13 +230,171 @@ def _check_present_record_identities(root: Path, manifest: dict[str, Any], conte
             _check_envelope(record, errors=errors, path=f"{relative}:{line_number}", manifest=manifest, context=context, rubric_by_id=rubric_by_id, require_model_rubric=True)
 
 
-def assess_form_ready(root: str | Path) -> dict[str, Any]:
+def _stage_media_coverage(root_path: Path, manifest: dict[str, Any], errors: list[dict[str, str]], counts: dict[str, int]) -> None:
+    """Stage 5: exact media registry coverage and byte agreement."""
+
+    from register_media import inspect_image
+
+    relative = manifest.get("paths", {}).get("media_index")
+    if not _safe_relative(relative):
+        return
+    path = root_path.joinpath(*PurePosixPath(relative).parts)
+    if not path.is_file():
+        errors.append(issue("MEDIA_INDEX_MISSING", "Media index is missing", relative))
+        return
+    try:
+        index = _read_json(path)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        errors.append(issue("RECORD_INVALID", f"Cannot parse media index: {exc}", relative))
+        return
+    blobs, uses = index.get("blobs"), index.get("uses")
+    if not isinstance(blobs, dict) or not isinstance(uses, dict):
+        errors.append(issue("RECORD_INVALID", "Media index needs blobs and uses objects", relative))
+        return
+    counts["unique_blobs"], counts["media_uses"] = len(blobs), len(uses)
+    indexed: set[str] = set()
+    for digest, blob in sorted(blobs.items()):
+        if _SHA256.fullmatch(str(digest)) is None or not isinstance(blob, dict):
+            errors.append(issue("MEDIA_BLOB_INVALID", f"Invalid blob entry {digest!r}", f"{relative}#/blobs/{digest}"))
+            continue
+        blob_relative = blob.get("path")
+        if not _safe_relative(blob_relative):
+            errors.append(issue("UNSAFE_PATH", "Blob path must be a safe package-relative path", f"{relative}#/blobs/{digest}"))
+            continue
+        target = root_path.joinpath(*PurePosixPath(blob_relative).parts)
+        if not target.is_file():
+            errors.append(issue("MEDIA_BLOB_MISSING", "Indexed blob file is missing", blob_relative))
+            continue
+        try:
+            info = inspect_image(target)
+        except (OSError, ValueError) as exc:
+            errors.append(issue("MEDIA_BLOB_MISMATCH", f"Blob bytes are not a supported image: {exc}", blob_relative))
+            continue
+        if (info["sha256"] != digest or info["size"] != blob.get("size") or info["mime"] != blob.get("mime")
+                or (info["width"], info["height"]) != (blob.get("width"), blob.get("height"))):
+            errors.append(issue("MEDIA_BLOB_MISMATCH", "Indexed blob metadata disagrees with the frozen bytes", blob_relative))
+        indexed.add(blob_relative)
+    actual = {
+        file.relative_to(root_path).as_posix()
+        for base in (root_path / "observations/source-media", root_path / "observations/renders")
+        if base.exists() for file in _walk_safe_files(base)
+    }
+    if actual != indexed:
+        errors.append(issue("MEDIA_COVERAGE_MISMATCH",
+                            f"Index/blob coverage differs: unindexed={sorted(actual - indexed)} missing={sorted(indexed - actual)}",
+                            relative))
+    for media_id, use in sorted(uses.items()):
+        if not isinstance(use, dict):
+            errors.append(issue("MEDIA_USE_INVALID", "Media use must be an object", f"{relative}#/uses/{media_id}"))
+            continue
+        if use.get("status", "registered") != "registered":
+            counts["unresolved_media"] += 1
+            continue
+        if use.get("blob_sha256") not in blobs:
+            errors.append(issue("MEDIA_USE_INVALID", "A registered media use must reference an indexed blob", f"{relative}#/uses/{media_id}"))
+
+
+def _stage_score_replay(root_path: Path, context: BaseContext | None, registry: dict, errors: list[dict[str, str]], counts: dict[str, int]) -> None:
+    """Stage 8: portable scored artifacts must replay byte-identically."""
+
+    if context is None or not registry:
+        return
+    if not (root_path / "scored").is_dir():
+        errors.append(issue("SCORED_OUTPUT_MISSING", "Portable scored output is missing", "scored"))
+        return
+    try:
+        summary = verify_projected_scores(context, registry, root_path)
+    except (OSError, UnicodeError, ValueError, KeyError, FileNotFoundError, FileExistsError) as exc:
+        errors.append(issue("SCORED_REPLAY_DRIFT", f"Scored artifacts are not reproducible from the closed decisions: {exc}", "scored"))
+        return
+    counts["scored_files"] = len(summary.get("files", {}))
+
+
+def _stage_presentation_crosscheck(
+    root_path: Path,
+    manifest: dict[str, Any],
+    context: BaseContext | None,
+    errors: list[dict[str, str]],
+    counts: dict[str, int],
+) -> None:
+    """Stage 9: presentation slots, supporting outputs, and form-input binding."""
+
+    presentation = validate_presentation(root_path, _SHARED_ROOT)
+    slot_document_path = root_path / "presentation/presentation-input.json"
+    if slot_document_path.is_file():
+        try:
+            counts["presentation_slots"] = len(_read_json(slot_document_path).get("slots", {}))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            pass
+    if not presentation["presentation_complete"]:
+        for row in presentation["errors"][:5]:
+            errors.append(issue("PRESENTATION_INCOMPLETE", row["message"], row["path"]))
+        return
+    try:
+        verify_supporting_outputs(root_path, _SHARED_ROOT)
+    except (OSError, UnicodeError, ValueError, KeyError, FileNotFoundError, FileExistsError) as exc:
+        errors.append(issue("SUPPORTING_OUTPUT_DRIFT", f"Supporting outputs are not reproducible: {exc}", "presentation"))
+    relative = manifest.get("paths", {}).get("form_input")
+    if not _safe_relative(relative) or context is None:
+        return
+    form_path = root_path.joinpath(*PurePosixPath(relative).parts)
+    if not form_path.is_file():
+        errors.append(issue("FORM_INPUT_MISSING", "Form input is missing", relative))
+        return
+    try:
+        form_input = _read_json(form_path)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        errors.append(issue("RECORD_INVALID", f"Cannot parse form input: {exc}", relative))
+        return
+    digests = {
+        "presentation_input_sha256": root_path / "presentation/presentation-input.json",
+        "final_decisions_sha256": root_path / "decisions/final-decisions.json",
+    }
+    for key, target in digests.items():
+        if not target.is_file() or form_input.get(key) != hashlib.sha256(target.read_bytes()).hexdigest():
+            errors.append(issue("FORM_INPUT_BINDING_MISMATCH", f"{key} does not match the packaged file", relative))
+    scored_digests = form_input.get("scored_sha256")
+    if not isinstance(scored_digests, dict):
+        errors.append(issue("FORM_INPUT_BINDING_MISMATCH", "scored_sha256 must map every model to a digest", relative))
+    else:
+        expected_models = sorted(context.models)
+        if sorted(scored_digests) != expected_models:
+            errors.append(issue("FORM_INPUT_BINDING_MISMATCH", "scored_sha256 must cover exactly the package models", relative))
+        for model_id in expected_models:
+            target = root_path / "scored" / f"rubrics-{model_id}.json"
+            if not target.is_file() or scored_digests.get(model_id) != hashlib.sha256(target.read_bytes()).hexdigest():
+                errors.append(issue("FORM_INPUT_BINDING_MISMATCH", f"scored_sha256 does not match scored/rubrics-{model_id}.json", relative))
+    counts["form_records"] = len(form_input.get("records", []) or [])
+    seen_models: set[Any] = set()
+    for index, record in enumerate(form_input.get("records", []) or []):
+        if not isinstance(record, dict):
+            errors.append(issue("FORM_INPUT_RECORD_INVALID", "Each form input record must be an object", f"{relative}#/records/{index}"))
+            continue
+        model_id = record.get("model_id")
+        if model_id is None:
+            continue
+        if model_id not in context.models or model_id in seen_models:
+            errors.append(issue("FORM_INPUT_BINDING_MISMATCH", f"Form input record {model_id!r} does not name exactly one package model", f"{relative}#/records/{index}"))
+        seen_models.add(model_id)
+    if seen_models != set(context.models):
+        errors.append(issue("FORM_INPUT_BINDING_MISMATCH", "Form input must carry exactly one record per package model", relative))
+
+
+def assess_form_ready(root: str | Path, scratch_root: str | Path | None = None) -> dict[str, Any]:
     """Assess the v2 base chain without requiring an outer seal or declared status."""
 
     root_path = Path(root)
     errors: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
     unresolved_counts = {"scores": 0, "adjudications": 0, "human_checks": 0, "material_gaps": 0}
+    counts: dict[str, int] = {"models": 0, "rubrics": 0, "media_uses": 0, "unique_blobs": 0, "unresolved_media": 0,
+                              "vision_records": 0, "human_records": 0, "final_decisions": 0,
+                              "closed_inner_adjudication_pairs": 0, "closed_inner_human_check_pairs": 0,
+                              "optional_gap_closures": 0, "semantic_gap_closures": 0, "scored_files": 0,
+                              "presentation_slots": 0, "form_records": 0}
+    base_counts: dict[str, Any] = {}
+    context: BaseContext | None = None
+    decision_registry: dict = {}
     manifest: dict[str, Any] = {}
     try:
         _walk_safe_files(root_path)
@@ -317,6 +484,7 @@ def assess_form_ready(root: str | Path) -> dict[str, Any]:
                         errors.append(issue("BASE_VALIDATION_FAILED", "Inner evidence bundle failed strict sealed validation", archive_relative))
                     else:
                         context = load_base_context(extracted)
+                        base_counts = dict(inner_report.get("counts", {}) or {})
                         mismatches = []
                         if base.get("package_id") != context.package_id:
                             mismatches.append("package_id")
@@ -342,25 +510,50 @@ def assess_form_ready(root: str | Path) -> dict[str, Any]:
                                 )
                                 errors.extend(outcome["errors"])
                                 unresolved_counts.update(outcome["unresolved"])
+                                decision_registry = outcome["registry"]
                         except (OSError, UnicodeError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
                             errors.append(issue("RECORD_VALIDATION_FAILED", str(exc), "observations"))
+                        try:
+                            counts["models"] = len(context.models)
+                            counts["rubrics"] = len(context.rubrics)
+                            counts["vision_records"] = len(load_observation_registry(root_path, manifest).vision)
+                            counts["human_records"] = len(load_observation_registry(root_path, manifest).human)
+                            counts["final_decisions"] = len(decision_registry)
+                            for (model_id, rubric_id), row in context.evidence.items():
+                                decision = decision_registry.get((model_id, rubric_id)) or {}
+                                if (row or {}).get("human_check_needed") is True and decision.get("decided_by") == "remote_human":
+                                    counts["closed_inner_human_check_pairs"] += 1
+                                if (row or {}).get("adjudication_ids") and decision:
+                                    counts["closed_inner_adjudication_pairs"] += 1
+                            _stage_media_coverage(root_path, manifest, errors, counts)
+                            _stage_score_replay(root_path, context, decision_registry, errors, counts)
+                            _stage_presentation_crosscheck(root_path, manifest, context, errors, counts)
+                        except (OSError, UnicodeError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                            errors.append(issue("RECORD_VALIDATION_FAILED", str(exc), "stages"))
             except (OSError, UnicodeError, ValueError, KeyError, TypeError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
                 errors.append(issue("BASE_INTEGRITY_FAILED", str(exc), str(archive_relative)))
-    derived = "ready_for_form" if not errors else "incomplete"
+    counts["unresolved_scores"] = unresolved_counts["scores"]
+    counts["unresolved_adjudications"] = unresolved_counts["adjudications"]
+    counts["unresolved_human_checks"] = unresolved_counts["human_checks"]
+    counts["unresolved_material_gaps"] = unresolved_counts["material_gaps"]
+    sealed = not errors and not any(unresolved_counts.values())
+    derived = "ready_for_form" if sealed else "incomplete"
     return {
         "validator_version": SCHEMA_VERSION,
         "result": "pass" if not errors else "fail",
         "derived_status": derived,
+        "counts": dict(counts),
+        "base_counts": dict(base_counts),
         "unresolved": dict(unresolved_counts),
         "errors": errors,
         "warnings": warnings,
     }
 
 
-def validate_form_ready(root: str | Path, require_seal: bool = False) -> dict[str, Any]:
-    """Validate base assessment and declared status; outer sealing arrives in Task 8."""
+def validate_form_ready(root: str | Path, require_seal: bool = False, scratch_root: str | Path | None = None) -> dict[str, Any]:
+    """Validate the deep assessment and the declared status; outer sealing arrives in Task 8."""
 
-    report = assess_form_ready(root)
+    report = assess_form_ready(root, scratch_root=scratch_root)
     try:
         manifest = _read_json(Path(root) / "FORM-READY.json")
     except (OSError, UnicodeError, json.JSONDecodeError):

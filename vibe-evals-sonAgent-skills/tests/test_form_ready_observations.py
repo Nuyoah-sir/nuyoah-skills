@@ -24,8 +24,8 @@ class FormReadyObservationTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
-    def _prepare(self, *, complete=True):
-        fixture = make_form_ready_workspace(self.root / "fixture", complete=complete)
+    def _prepare(self, *, complete=True, closed=True):
+        fixture = make_form_ready_workspace(self.root / "fixture", complete=complete, closed=closed)
         outer = fixture.outer
         manifest = json.loads((outer / "FORM-READY.json").read_text(encoding="utf-8"))
         binding = {
@@ -35,12 +35,9 @@ class FormReadyObservationTests(unittest.TestCase):
             "source_input_digest": fixture.source_digest,
             "task_id": manifest["base"]["package_id"] and "示例题",
         }
-        index_path = outer / "observations/media-index.json"
-        index = json.loads(index_path.read_text(encoding="utf-8"))
-        for media_id, role, digest in (("MEDIA-target", "target", TARGET_BLOB), ("RENDER-candidate", "candidate_full", RENDER_BLOB)):
-            index["blobs"][digest] = {"mime": "image/png", "size": 24, "width": 2, "height": 3, "path": f"observations/renders/{digest}.png"}
-            index["uses"][media_id] = {"blob_sha256": digest, "role": role, "acquisition_method": "render_media", "bindings": [binding], "status": "registered"}
-        write_json(index_path, index)
+        index = json.loads((outer / "observations/media-index.json").read_text(encoding="utf-8"))
+        for media_id in ("MEDIA-target", "RENDER-candidate"):
+            self.assertIn(media_id, index["uses"], "the closed fixture must register both review media ids")
         return fixture, manifest, binding
 
     def _envelope(self, fixture, manifest):
@@ -273,6 +270,7 @@ class FormReadyObservationTests(unittest.TestCase):
 
     def test_vision_cli_appends_only_after_validation_payload_is_provided(self):
         fixture, manifest, _ = self._prepare()
+        (fixture.outer / "observations/machine-vision.jsonl").write_text("", encoding="utf-8")
         record_path = self.root / "vision.json"
         write_json(record_path, self._vision(fixture, manifest, 1))
         result = subprocess.run(

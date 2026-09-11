@@ -345,6 +345,7 @@ def validate_final_decisions(
             "unresolved": {"scores": len(base_ctx.evidence), "adjudications": 0, "human_checks": 0, "material_gaps": len(base_ctx.material_gaps)},
         }
     records = document.get("records", []) if isinstance(document, dict) else []
+    invalid_pairs: set[tuple[str, str]] = set()
     for index, record in enumerate(records if isinstance(records, list) else []):
         if isinstance(record, dict) and isinstance(record.get("model_id"), str) and isinstance(record.get("rubric_id"), str):
             key = (record["model_id"], record["rubric_id"])
@@ -357,6 +358,8 @@ def validate_final_decisions(
                 context=base_ctx, observations=observations, path=f"{DECISION_JSON}#/records/{index}",
             )
             errors.extend(row_errors)
+            if row_errors:
+                invalid_pairs.add(key)
         else:
             errors.append(issue("DECISION_RECORD_INVALID", "Each decision must name a model_id and rubric_id", f"{DECISION_JSON}#/records/{index}"))
     expected = set(base_ctx.evidence)
@@ -403,11 +406,11 @@ def validate_final_decisions(
             errors.append(issue("GAP_UNKNOWN", f"{gap_id} is not a material gap of the sealed base package", AUDIT_JSON))
 
     unresolved_human = sum(
-        1 for (model_id, rubric_id) in expected
-        if (base_ctx.evidence.get((model_id, rubric_id)) or {}).get("human_check_needed") is True
-        and (registry.get((model_id, rubric_id)) or {}).get("decided_by") != REMOTE_HUMAN_ACTOR
+        1 for key in expected
+        if (base_ctx.evidence.get(key) or {}).get("human_check_needed") is True
+        and (key in invalid_pairs or (registry.get(key) or {}).get("decided_by") != REMOTE_HUMAN_ACTOR)
     )
-    unresolved_scores = len(missing)
+    unresolved_scores = len(missing) + len(invalid_pairs)
     unresolved = {
         "scores": unresolved_scores,
         "adjudications": unresolved_adjudications,

@@ -1,4 +1,5 @@
 import json
+import hashlib
 import re
 import sys
 import tempfile
@@ -22,6 +23,41 @@ from validate_form_ready import (
 from tests.v2_fixtures import make_form_ready_workspace, rewrite_manifest
 
 
+def _inner_row_mutator(**_fields):
+    """Return a bundle mutator that rewrites the single inner evidence row."""
+
+    def mutate(bundle: Path) -> None:
+        path = bundle / "models" / "model-a" / "rubric-evidence.jsonl"
+        row = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+        row.update(_fields)
+        path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+        manifest_path = bundle / "MANIFEST.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["package_status"] = "ready_for_local_review"
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        if _fields.get("adjudication_ids"):
+            (bundle / "review" / "pending-adjudications.json").write_text(json.dumps({"items": [{
+                "adjudication_id": "ADJ-001", "status": "pending", "rubric_ids": ["R1-01"],
+                "question": "按行为还是代码判？", "ambiguity": "两种验收解释都可能成立。",
+                "evidence_ids": [], "applies_to_all_models": True,
+                "recommended_policy": "按真实行为。", "alternative_policy": "按静态代码。",
+                "impact": "影响 R1-01。", "resolution": None,
+            }]}, ensure_ascii=False), encoding="utf-8")
+
+    return mutate
+
+
+def _missing_material_mutator(gap_id: str = "rubrics说明.xlsx"):
+    def mutate(bundle: Path) -> None:
+        path = bundle / "MANIFEST.json"
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest["missing_materials"] = [gap_id]
+        manifest["package_status"] = "ready_for_local_review"
+        path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    return mutate
+
+
 def schema_rule_accepts(rule, value):
     """Evaluate the JSON Schema scalar keywords used by these ID contracts."""
 
@@ -37,10 +73,15 @@ class ValidateFormReadyTests(unittest.TestCase):
         self.root = Path(self.temp.name)
 
     def test_assesses_minimal_complete_unsealed_form_ready_workspace(self):
-        fixture = make_form_ready_workspace(self.root, complete=True)
+        fixture = make_form_ready_workspace(self.root, complete=False, closed=True)
+        before_sha = hashlib.sha256(fixture.sealed_inner_zip.read_bytes()).hexdigest()
         report = assess_form_ready(fixture.outer)
         self.assertEqual("pass", report["result"], report["errors"])
         self.assertEqual("ready_for_form", report["derived_status"])
+        self.assertEqual(before_sha, hashlib.sha256((fixture.outer / "base/evidence-bundle.zip").read_bytes()).hexdigest())
+        self.assertEqual(1, report["counts"]["models"])
+        self.assertEqual(0, sum(report["unresolved"].values()))
+        self.assertEqual(1, report["base_counts"]["models"])
 
     def test_rejects_wrong_schema_and_unsafe_internal_path(self):
         fixture = make_form_ready_workspace(self.root, complete=True)
@@ -105,8 +146,15 @@ class ValidateFormReadyTests(unittest.TestCase):
         self.assertIn("IDENTITY_MISMATCH", {row["code"] for row in report["errors"]})
 
     def test_assessment_ignores_declared_status_but_validation_enforces_it(self):
-        fixture = make_form_ready_workspace(self.root, complete=False)
-        self.assertEqual("pass", assess_form_ready(fixture.outer)["result"])
+        fixture = make_form_ready_workspace(self.root, complete=False, closed=True)
+        manifest_path = fixture.outer / "FORM-READY.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["package_status"] = "incomplete"
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        assessment = assess_form_ready(fixture.outer)
+        self.assertEqual("pass", assessment["result"], assessment["errors"])
+        self.assertEqual("ready_for_form", assessment["derived_status"])
         report = validate_form_ready(fixture.outer, require_seal=False)
         self.assertIn("STATUS_MISMATCH", {row["code"] for row in report["errors"]})
 
@@ -164,6 +212,116 @@ class ValidateFormReadyTests(unittest.TestCase):
             for invalid in (7, True, None):
                 with self.subTest(schema=filename, value=invalid):
                     self.assertFalse(schema_rule_accepts(field_schema, invalid))
+
+
+class FormReadyClosureTests(unittest.TestCase):
+    """Task 7: the outer layer must close every inner unresolved state."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def _criterion_sha(self, outer: Path) -> str:
+        document = json.loads((outer / "decisions/criterion-classifications.json").read_text(encoding="utf-8"))
+        return document["records"][0]["criterion_sha256"]
+
+    def test_outer_decisions_can_close_immutable_inner_null_pending_and_human_check(self):
+        fixture = make_form_ready_workspace(
+            self.root, complete=False, closed=True,
+            mutate_bundle=_inner_row_mutator(suggested_score=None, reason_code="insufficient_evidence",
+                                             human_check_needed=True, adjudication_ids=["ADJ-001"]),
+        )
+        inner_before = (fixture.outer / "base/evidence-bundle.zip").read_bytes()
+        manifest = json.loads((fixture.outer / "FORM-READY.json").read_text(encoding="utf-8"))
+
+        report = assess_form_ready(fixture.outer)
+
+        self.assertEqual("pass", report["result"], report["errors"])
+        self.assertEqual("ready_for_form", report["derived_status"])
+        self.assertEqual(0, sum(report["unresolved"].values()))
+        self.assertEqual(1, report["counts"]["closed_inner_human_check_pairs"])
+        self.assertEqual(1, report["counts"]["closed_inner_adjudication_pairs"])
+        self.assertEqual(1, report["base_counts"]["human_checks"])
+        self.assertEqual(1, report["base_counts"]["pending_adjudications"])
+        self.assertEqual(inner_before, (fixture.outer / "base/evidence-bundle.zip").read_bytes())
+        self.assertEqual(manifest["base"]["sha256"], hashlib.sha256(inner_before).hexdigest())
+
+    def test_refuses_form_ready_when_any_inner_null_lacks_final_binary_decision(self):
+        fixture = make_form_ready_workspace(
+            self.root, complete=False, closed=True,
+            mutate_bundle=_inner_row_mutator(suggested_score=None, reason_code="insufficient_evidence"),
+        )
+        path = fixture.outer / "decisions/final-decisions.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["records"][0]["score"] = None
+        path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        report = assess_form_ready(fixture.outer)
+
+        self.assertEqual("fail", report["result"])
+        self.assertIn("DECISION_SCORE_INVALID", {row["code"] for row in report["errors"]})
+        self.assertNotEqual("ready_for_form", report["derived_status"])
+
+    def test_refuses_form_ready_when_pending_adjudication_lacks_remote_resolution(self):
+        fixture = make_form_ready_workspace(
+            self.root, complete=False, closed=True,
+            mutate_bundle=_inner_row_mutator(adjudication_ids=["ADJ-001"]),
+        )
+        path = fixture.outer / "decisions/adjudication-audit.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        for record in document["records"]:
+            record["decided_by"] = "mechanical"
+        path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        report = assess_form_ready(fixture.outer)
+
+        self.assertIn("DECISION_UNRESOLVED_ADJUDICATION", {row["code"] for row in report["errors"]})
+        self.assertEqual(1, report["unresolved"]["adjudications"])
+        self.assertEqual("incomplete", report["derived_status"])
+
+    def test_refuses_form_ready_when_human_check_lacks_valid_visual_or_human_observation(self):
+        fixture = make_form_ready_workspace(
+            self.root, complete=False, closed=True,
+            mutate_bundle=_inner_row_mutator(human_check_needed=True),
+        )
+        (fixture.outer / "observations/remote-human.jsonl").write_text("", encoding="utf-8")
+
+        report = assess_form_ready(fixture.outer)
+
+        codes = {row["code"] for row in report["errors"]}
+        self.assertIn("DECISION_EVIDENCE_MISSING", codes)
+        self.assertEqual(1, report["unresolved"]["human_checks"])
+
+    def test_refuses_form_ready_when_material_gap_lacks_typed_resolution(self):
+        fixture = make_form_ready_workspace(
+            self.root, complete=False, closed=True,
+            mutate_bundle=_missing_material_mutator("rubrics说明.xlsx"),
+        )
+        path = fixture.outer / "decisions/adjudication-audit.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["records"] = [record for record in document["records"] if record.get("gap_id") != "rubrics说明.xlsx"]
+        path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        report = assess_form_ready(fixture.outer)
+
+        self.assertIn("DECISION_UNRESOLVED_MATERIAL_GAP", {row["code"] for row in report["errors"]})
+        self.assertEqual(1, report["unresolved"]["material_gaps"])
+        self.assertEqual(1, report["base_counts"]["material_gaps"])
+
+    def test_requires_exact_model_times_rubric_decision_coverage(self):
+        fixture = make_form_ready_workspace(self.root, complete=False, closed=True)
+        path = fixture.outer / "decisions/final-decisions.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["records"].append({**document["records"][0], "model_id": "model-ghost"})
+        path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        report = assess_form_ready(fixture.outer)
+        self.assertIn("DECISION_COVERAGE_UNEXPECTED", {row["code"] for row in report["errors"]})
+
+        document["records"] = []
+        path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        report = assess_form_ready(fixture.outer)
+        self.assertIn("DECISION_COVERAGE_MISSING", {row["code"] for row in report["errors"]})
 
 
 if __name__ == "__main__":

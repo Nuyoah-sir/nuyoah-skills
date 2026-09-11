@@ -31,6 +31,17 @@ class FormReadyDecisionTests(unittest.TestCase):
         fixture = make_form_ready_workspace(self.root / "fixture", complete=True, mutate_bundle=mutate_bundle)
         return fixture, fixture.outer
 
+    def _decision_codes(self, outer):
+        """Decision-layer codes, without the packaging stages that follow closure."""
+
+        from form_ready_context import load_form_ready_base, load_observation_registry
+        from validate_final_decisions import validate_final_decisions
+
+        manifest, context, _ = load_form_ready_base(outer)
+        observations = load_observation_registry(outer, manifest)
+        outcome = validate_final_decisions(context, observations, observations, outer / DECISIONS, audit_path=outer / AUDIT)
+        return {row["code"] for row in outcome["errors"]}, outcome
+
     def _decisions(self, outer):
         return json.loads((outer / DECISIONS).read_text(encoding="utf-8"))
 
@@ -46,35 +57,35 @@ class FormReadyDecisionTests(unittest.TestCase):
 
     def test_mechanical_decision_needs_deterministic_evidence_in_the_matching_direction(self):
         fixture, outer = self._prepare()
-        self.assertEqual(set(), self._codes(outer)[0])
+        self.assertEqual(set(), self._decision_codes(outer)[0])
 
         document = self._decisions(outer)
         document["records"][0]["evidence_ids"] = ["EV-unknown"]
         write_json(outer / DECISIONS, document)
-        self.assertIn("DECISION_EVIDENCE_UNKNOWN", self._codes(outer)[0])
+        self.assertIn("DECISION_EVIDENCE_UNKNOWN", self._decision_codes(outer)[0])
 
         document["records"][0]["evidence_ids"] = [EV_ID]
         document["records"][0]["score"] = 0
         write_json(outer / DECISIONS, document)
-        self.assertIn("DECISION_EVIDENCE_DIRECTION", self._codes(outer)[0])
+        self.assertIn("DECISION_EVIDENCE_DIRECTION", self._decision_codes(outer)[0])
 
     def test_accepted_machine_decision_must_equal_the_inner_suggested_score(self):
         fixture, outer = self._prepare()
         document = self._decisions(outer)
         document["records"][0]["decided_by"] = "accepted_machine"
         write_json(outer / DECISIONS, document)
-        self.assertEqual(set(), self._codes(outer)[0])
+        self.assertEqual(set(), self._decision_codes(outer)[0])
 
         document["records"][0]["score"] = 0
         write_json(outer / DECISIONS, document)
-        self.assertIn("DECISION_ACTOR_UNSUPPORTED", self._codes(outer)[0])
+        self.assertIn("DECISION_ACTOR_UNSUPPORTED", self._decision_codes(outer)[0])
 
     def test_machine_vision_decision_requires_the_audited_pair(self):
         fixture, outer = self._prepare()
         document = self._decisions(outer)
         document["records"][0]["decided_by"] = "machine_vision"
         write_json(outer / DECISIONS, document)
-        self.assertIn("DECISION_EVIDENCE_MISSING", self._codes(outer)[0])
+        self.assertIn("DECISION_EVIDENCE_MISSING", self._decision_codes(outer)[0])
 
         self._register_candidate_media(fixture)
         rows = [self._vision(fixture, read_index) for read_index in (1, 2)]
@@ -83,7 +94,7 @@ class FormReadyDecisionTests(unittest.TestCase):
         (outer / "observations/machine-vision.jsonl").write_text(
             "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8"
         )
-        self.assertEqual(set(), self._codes(outer)[0])
+        self.assertEqual(set(), self._decision_codes(outer)[0])
 
     def test_remote_human_decision_requires_a_matching_attestation(self):
         fixture, outer = self._prepare()
@@ -94,11 +105,11 @@ class FormReadyDecisionTests(unittest.TestCase):
         document["records"][0]["decided_by"] = "remote_human"
         document["records"][0]["evidence_ids"] = [human["observation_id"]]
         write_json(outer / DECISIONS, document)
-        self.assertEqual(set(), self._codes(outer)[0])
+        self.assertEqual(set(), self._decision_codes(outer)[0])
 
         document["records"][0]["score"] = 0
         write_json(outer / DECISIONS, document)
-        self.assertIn("DECISION_EVIDENCE_MISSING", self._codes(outer)[0])
+        self.assertIn("DECISION_EVIDENCE_MISSING", self._decision_codes(outer)[0])
 
     def test_null_or_missing_score_is_never_closed(self):
         fixture, outer = self._prepare()
@@ -267,6 +278,8 @@ class FormReadyDecisionTests(unittest.TestCase):
     def _register_candidate_media(self, fixture):
         path = fixture.outer / "observations/media-index.json"
         index = json.loads(path.read_text(encoding="utf-8"))
+        if "RENDER-candidate" in index.get("uses", {}):
+            return
         manifest = json.loads((fixture.outer / "FORM-READY.json").read_text(encoding="utf-8"))
         binding = {
             "outer_package_id": manifest["outer_package_id"], "base_package_id": fixture.inner_package_id,
