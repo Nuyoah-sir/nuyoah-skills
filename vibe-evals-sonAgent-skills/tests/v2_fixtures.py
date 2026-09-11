@@ -42,6 +42,7 @@ FORM_READY_PATHS = {
 @dataclass(frozen=True)
 class FormReadyFixture:
     sealed_inner_zip: Path
+    sealed_inner_sidecar: Path
     outer: Path
     inner_package_id: str
     source_digest: str
@@ -116,7 +117,7 @@ def make_form_ready_workspace(root: Path, *, complete: bool) -> FormReadyFixture
     write_json(outer / FORM_READY_PATHS["source_verification"], {"schema_version": "2.0.0", "outer_package_id": outer_id, "base_package_id": inner_manifest["package_id"], "base_zip_sha256": nested_digest, "source_input_digest": inner_manifest["source_input_digest"], "task_id": inner_manifest["task"]["name"], "checked_at": "2026-09-10T10:00:00+08:00", "result": "unchanged"})
     (outer / "provenance").mkdir(exist_ok=True)
     write_json(outer / FORM_READY_PATHS["run_state"], {"schema_version": "2.0.0", "run_id": str(uuid.uuid4()), "outer_package_id": outer_id, "base_package_id": inner_manifest["package_id"], "base_zip_sha256": nested_digest, "source_input_digest": inner_manifest["source_input_digest"], "phase": "base_verified", "completed_phase_receipts": [], "created_at": "2026-09-10T10:00:00+08:00", "updated_at": "2026-09-10T10:00:00+08:00", "terminal_failure_code": None})
-    return FormReadyFixture(nested_archive, outer, inner_manifest["package_id"], inner_manifest["source_input_digest"])
+    return FormReadyFixture(nested_archive, nested_archive.with_suffix(".zip.sha256"), outer, inner_manifest["package_id"], inner_manifest["source_input_digest"])
 
 
 def rewrite_manifest(outer: Path, *, schema_version: str, decisions_path: str) -> None:
