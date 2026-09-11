@@ -126,18 +126,28 @@ def _check_present_record_identities(root: Path, manifest: dict[str, Any], conte
                 media = _read_json(media_path)
             except (OSError, UnicodeError, json.JSONDecodeError) as exc:
                 errors.append(issue("RECORD_INVALID", f"Cannot parse media index: {exc}", media_relative))
-                media = {}
-            if isinstance(media, dict):
+                media = None
+            if media is not None and not isinstance(media, dict):
+                errors.append(issue("RECORD_INVALID", "Media index root must be an object", media_relative))
+            elif isinstance(media, dict):
                 if media.get("outer_package_id") != manifest.get("outer_package_id"):
                     _add_identity_error(errors, media_relative, "Media index outer_package_id does not match")
-                uses = media.get("uses", {})
-                if isinstance(uses, dict):
+                uses = media.get("uses")
+                if not isinstance(uses, dict):
+                    errors.append(issue("RECORD_INVALID", "Media index uses must be an object", f"{media_relative}#/uses"))
+                else:
                     for media_id, use in uses.items():
-                        bindings = use.get("bindings") if isinstance(use, dict) else None
+                        if not isinstance(use, dict):
+                            errors.append(issue("RECORD_INVALID", "Media use must be an object", f"{media_relative}#/uses/{media_id}"))
+                            continue
+                        bindings = use.get("bindings")
                         if not isinstance(bindings, list) or not bindings:
-                            _add_identity_error(errors, f"{media_relative}#/uses/{media_id}", "Media use requires at least one scoped identity binding")
+                            errors.append(issue("RECORD_INVALID", "Media use requires a nonempty bindings array", f"{media_relative}#/uses/{media_id}"))
                             continue
                         for index, binding in enumerate(bindings):
+                            if not isinstance(binding, dict):
+                                errors.append(issue("RECORD_INVALID", "Media binding must be an object", f"{media_relative}#/uses/{media_id}/bindings/{index}"))
+                                continue
                             _check_envelope(binding, errors=errors, path=f"{media_relative}#/uses/{media_id}/bindings/{index}", manifest=manifest, context=context, rubric_by_id=rubric_by_id, require_model_rubric=False)
     json_record_keys = ("final_decisions", "criterion_classifications", "adjudication_audit", "form_input")
     for key in json_record_keys:
@@ -152,12 +162,19 @@ def _check_present_record_identities(root: Path, manifest: dict[str, Any], conte
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             errors.append(issue("RECORD_INVALID", f"Cannot parse record document: {exc}", relative))
             continue
+        if not isinstance(document, dict):
+            errors.append(issue("RECORD_INVALID", "Record document root must be an object", relative))
+            continue
         if key == "form_input":
             _check_envelope(document, errors=errors, path=relative, manifest=manifest, context=context, rubric_by_id=rubric_by_id, require_model_rubric=False)
-        records = document.get("records", []) if isinstance(document, dict) else []
+        records = document.get("records")
         if not isinstance(records, list):
+            errors.append(issue("RECORD_INVALID", "Record document records must be an array", f"{relative}#/records"))
             continue
         for index, record in enumerate(records):
+            if not isinstance(record, dict):
+                errors.append(issue("RECORD_INVALID", "Each record must be an object", f"{relative}#/records/{index}"))
+                continue
             _check_envelope(
                 record,
                 errors=errors,
@@ -176,7 +193,8 @@ def _check_present_record_identities(root: Path, manifest: dict[str, Any], conte
             continue
         try:
             lines = file_path.read_text(encoding="utf-8").splitlines()
-        except (OSError, UnicodeError):
+        except (OSError, UnicodeError) as exc:
+            errors.append(issue("RECORD_INVALID", f"Cannot read JSONL record file: {exc}", relative))
             continue
         for line_number, line in enumerate(lines, 1):
             if not line.strip():
@@ -185,6 +203,9 @@ def _check_present_record_identities(root: Path, manifest: dict[str, Any], conte
                 record = json.loads(line)
             except json.JSONDecodeError as exc:
                 errors.append(issue("RECORD_INVALID", f"Cannot parse JSONL record: {exc}", f"{relative}:{line_number}"))
+                continue
+            if not isinstance(record, dict):
+                errors.append(issue("RECORD_INVALID", "Each JSONL record must be an object", f"{relative}:{line_number}"))
                 continue
             _check_envelope(record, errors=errors, path=f"{relative}:{line_number}", manifest=manifest, context=context, rubric_by_id=rubric_by_id, require_model_rubric=True)
 

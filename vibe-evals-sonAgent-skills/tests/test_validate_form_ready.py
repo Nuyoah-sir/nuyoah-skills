@@ -1,8 +1,10 @@
 import json
+import re
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "shared" / "scripts"))
@@ -18,6 +20,14 @@ from validate_form_ready import (
     validate_form_ready,
 )
 from tests.v2_fixtures import make_form_ready_workspace, rewrite_manifest
+
+
+def schema_rule_accepts(rule, value):
+    """Evaluate the JSON Schema scalar keywords used by these ID contracts."""
+
+    if rule.get("type") == "string" and not isinstance(value, str):
+        return False
+    return not isinstance(value, str) or re.fullmatch(rule.get("pattern", ".*"), value) is not None
 
 
 class ValidateFormReadyTests(unittest.TestCase):
@@ -107,6 +117,53 @@ class ValidateFormReadyTests(unittest.TestCase):
         report = assess_form_ready(fixture.outer)
         self.assertEqual("fail", report["result"])
         self.assertIn("BASE_INTEGRITY_FAILED", {row["code"] for row in report["errors"]})
+
+    def test_rejects_wrong_json_record_document_shapes(self):
+        bad_documents = ([], {"records": "not-an-array"}, {"records": [None]})
+        for index, document in enumerate(bad_documents):
+            with self.subTest(document=document):
+                fixture = make_form_ready_workspace(self.root / str(index), complete=True)
+                path = fixture.outer / "decisions/final-decisions.json"
+                path.write_text(json.dumps(document) + "\n", encoding="utf-8")
+                report = assess_form_ready(fixture.outer)
+                self.assertIn("RECORD_INVALID", {row["code"] for row in report["errors"]})
+
+    def test_rejects_non_object_malformed_and_non_utf8_jsonl_records(self):
+        payloads = (b"[]\n", b"{not json}\n", b"\xff\n")
+        for index, payload in enumerate(payloads):
+            with self.subTest(payload=payload):
+                fixture = make_form_ready_workspace(self.root / str(index), complete=True)
+                (fixture.outer / "observations/machine-vision.jsonl").write_bytes(payload)
+                report = assess_form_ready(fixture.outer)
+                self.assertIn("RECORD_INVALID", {row["code"] for row in report["errors"]})
+
+    def test_rejects_unreadable_present_record_file(self):
+        fixture = make_form_ready_workspace(self.root, complete=True)
+        blocked = fixture.outer / "observations/machine-vision.jsonl"
+        original = type(blocked).read_text
+
+        def fail_one(path, *args, **kwargs):
+            if path == blocked:
+                raise OSError("synthetic read failure")
+            return original(path, *args, **kwargs)
+
+        with mock.patch.object(type(blocked), "read_text", fail_one):
+            report = assess_form_ready(fixture.outer)
+        self.assertIn("RECORD_INVALID", {row["code"] for row in report["errors"]})
+
+    def test_patterned_schema_ids_reject_non_strings(self):
+        cases = (
+            ("observation-record.schema.json", "observation_id"),
+            ("adjudication-audit.schema.json", "adjudication_id"),
+        )
+        for filename, field in cases:
+            schema = json.loads((ROOT / "shared" / "schema" / filename).read_text(encoding="utf-8"))
+            properties = schema["properties"] if field in schema.get("properties", {}) else schema["$defs"]["record"]["properties"]
+            field_schema = properties[field]
+            self.assertEqual("string", field_schema.get("type"), f"{filename} must constrain {field} to strings")
+            for invalid in (7, True, None):
+                with self.subTest(schema=filename, value=invalid):
+                    self.assertFalse(schema_rule_accepts(field_schema, invalid))
 
 
 if __name__ == "__main__":
