@@ -31,6 +31,20 @@ class EndToEndTests(unittest.TestCase):
             final = finalize_scores(extracted, decisions, root / "final")
             self.assertEqual(1, final["model_count"])
 
+            reviewable_bundle = make_bundle(root / "legacy-local-review", "ready_for_local_review")
+            reviewable_manifest_path = reviewable_bundle / "MANIFEST.json"
+            reviewable_manifest = json.loads(reviewable_manifest_path.read_text(encoding="utf-8"))
+            reviewable_manifest["missing_materials"] = ["record_txt_missing"]
+            write_json(reviewable_manifest_path, reviewable_manifest)
+            reviewable_archive = root / "dist" / "legacy-local-review.zip"
+            package_bundle(reviewable_bundle, reviewable_archive)
+            reviewable_extracted = safe_extract_zip(reviewable_archive, root / "legacy-local-review-extracted")
+            review_root = root / "legacy-local-review-output"
+            local_review = prepare_local_review(reviewable_extracted, review_root)
+            self.assertFalse(local_review["can_finalize"])
+            self.assertTrue((review_root / "人工裁定清单.md").is_file())
+            self.assertTrue((review_root / "evidence_requests.json").is_file())
+
     def test_extracted_tampering_is_detected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
