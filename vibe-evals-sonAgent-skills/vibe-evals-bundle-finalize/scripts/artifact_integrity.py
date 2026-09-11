@@ -31,8 +31,12 @@ _WINDOWS_RESERVED = {
     "PRN",
     "AUX",
     "NUL",
+    "CONIN$",
+    "CONOUT$",
     *(f"COM{i}" for i in range(1, 10)),
     *(f"LPT{i}" for i in range(1, 10)),
+    *(f"COM{i}" for i in "\u00b9\u00b2\u00b3"),
+    *(f"LPT{i}" for i in "\u00b9\u00b2\u00b3"),
 }
 _MANIFEST_SCHEMAS = {
     "FORM-READY.json": ("form-ready", "vibe-evals-form-ready-bundle", "2.0.0"),
@@ -100,7 +104,8 @@ def _safe_posix_path(raw_name: str, *, directory: bool = False) -> str:
     for part in parts:
         if ":" in part or part.rstrip(" .") != part:
             raise ValueError(f"Unsafe Windows artifact path: {raw_name}")
-        if part.split(".", 1)[0].upper() in _WINDOWS_RESERVED:
+        device_stem = unicodedata.normalize("NFC", part).rstrip(" .").split(".", 1)[0].rstrip(" ").upper()
+        if device_stem in _WINDOWS_RESERVED:
             raise ValueError(f"Unsafe Windows reserved name: {raw_name}")
     normalized = PurePosixPath(*parts).as_posix()
     if normalized in {"", "."}:
@@ -143,8 +148,8 @@ def _preflight_zip(
         raise ValueError(f"ZIP member count exceeds limit {effective['members']}")
     checked: list[tuple[zipfile.ZipInfo, str, str]] = []
     seen: dict[str, str] = {}
-    file_paths: set[str] = set()
-    required_directories: set[str] = set()
+    canonical_file_paths: set[str] = set()
+    canonical_required_directories: set[str] = set()
     total_size = 0
     for info in infos:
         if info.flag_bits & 0x1:
@@ -156,12 +161,16 @@ def _preflight_zip(
             raise ValueError(f"Duplicate normalized ZIP member: {info.filename}")
         seen[collision_key] = info.filename
         parts = normalized.split("/")
-        ancestors = {"/".join(parts[:index]) for index in range(1, len(parts))}
-        if ancestors & file_paths or (kind == "file" and normalized in required_directories):
+        canonical_ancestors = {
+            _collision_key("/".join(parts[:index])) for index in range(1, len(parts))
+        }
+        if canonical_ancestors & canonical_file_paths or (
+            kind == "file" and collision_key in canonical_required_directories
+        ):
             raise ValueError(f"ZIP file/directory conflict: {info.filename}")
-        required_directories.update(ancestors)
+        canonical_required_directories.update(canonical_ancestors)
         if kind == "file":
-            file_paths.add(normalized)
+            canonical_file_paths.add(collision_key)
         if info.file_size > effective["member_bytes"]:
             raise ValueError(f"ZIP member exceeds byte limit: {info.filename}")
         total_size += info.file_size
@@ -286,20 +295,15 @@ def _rows_for_inventory(files: Mapping[str, Path]) -> list[dict[str, str]]:
 
 def write_checksum_manifest(
     root: str | Path,
-    manifest: str | Path | None = None,
     *,
-    excludes: set[str] | frozenset[str],
-) -> list[dict[str, str]]:
-    """Write a deterministic SHA-256 manifest and return its sorted rows."""
+    excludes: set[str],
+) -> Path:
+    """Write the canonical SHA-256 manifest and return its path."""
 
     root_path = Path(root)
     excludes_normalized = _normalize_relative_set(excludes, "excluded")
-    manifest_path = Path(manifest) if manifest is not None else root_path / "integrity" / "files.sha256"
-    try:
-        manifest_relative = manifest_path.resolve(strict=False).relative_to(root_path.resolve(strict=True)).as_posix()
-    except ValueError as exc:
-        raise ValueError("Checksum manifest must be inside its root") from exc
-    if manifest_relative not in excludes_normalized:
+    manifest_path = root_path / "integrity" / "files.sha256"
+    if "integrity/files.sha256" not in excludes_normalized:
         raise ValueError("Checksum manifest path must be caller-excluded")
     rows = _rows_for_inventory(_inventory_files(root_path, excludes_normalized))
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -309,7 +313,7 @@ def write_checksum_manifest(
         os.replace(temporary, manifest_path)
     finally:
         temporary.unlink(missing_ok=True)
-    return rows
+    return manifest_path
 
 
 def verify_checksum_manifest(

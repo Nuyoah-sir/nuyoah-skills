@@ -20,8 +20,7 @@ sha256 = sha256_file
 
 
 def _write_checksums(root: Path) -> None:
-    target = root / "integrity" / "files.sha256"
-    write_checksum_manifest(root, target, excludes=GENERATED_EXCLUDES)
+    write_checksum_manifest(root, excludes=GENERATED_EXCLUDES)
 
 
 def package_bundle(bundle_dir: str | Path, output_zip: str | Path) -> dict:

@@ -117,14 +117,47 @@ class ArtifactIntegrityTests(unittest.TestCase):
                 self.assertFalse((root / "out").exists())
 
     def test_safe_extract_preflights_file_directory_conflicts(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            archive = self._zip(root, [("parent", "file"), ("parent/child.txt", "child")])
-            destination = root / "out"
-            with mock.patch("zipfile.ZipFile.open", side_effect=AssertionError("extraction started")):
-                with self.assertRaisesRegex(ValueError, "conflict"):
-                    safe_extract_zip(archive, destination)
-            self.assertFalse(destination.exists())
+        composed = "caf\u00e9"
+        decomposed = unicodedata.normalize("NFD", composed)
+        cases = (
+            (("parent", "file"), ("parent/child.txt", "child")),
+            (("A", "file"), ("a/child.txt", "child")),
+            (("a/child.txt", "child"), ("A", "file")),
+            ((composed, "file"), (f"{decomposed}/child.txt", "child")),
+            ((f"{decomposed}/child.txt", "child"), (composed, "file")),
+        )
+        for members in cases:
+            with self.subTest(members=members), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                archive = self._zip(root, list(members))
+                destination = root / "out"
+                with mock.patch("zipfile.ZipFile.open", side_effect=AssertionError("extraction started")):
+                    with self.assertRaisesRegex(ValueError, "conflict"):
+                        safe_extract_zip(archive, destination)
+                self.assertFalse(destination.exists())
+
+    def test_safe_extract_rejects_all_windows_device_name_forms_before_extraction(self):
+        names = (
+            "CONIN$",
+            "conin$.txt",
+            "CONOUT$",
+            "conout$.log",
+            "COM\u00b9",
+            "com\u00b2.txt",
+            "COM\u00b3.log",
+            "LPT\u00b9",
+            "lpt\u00b2.txt",
+            "LPT\u00b3.log",
+        )
+        for name in names:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                archive = self._zip(root, [(name, "device")])
+                destination = root / "out"
+                with mock.patch("zipfile.ZipFile.open", side_effect=AssertionError("extraction started")):
+                    with self.assertRaisesRegex(ValueError, "reserved"):
+                        safe_extract_zip(archive, destination)
+                self.assertFalse(destination.exists())
 
     def test_safe_extract_rejects_encrypted_symlink_and_device_entries(self):
         encrypted = zipfile.ZipInfo("encrypted.txt")
@@ -252,9 +285,10 @@ class ArtifactIntegrityTests(unittest.TestCase):
             (root / "ignored.txt").write_text("ignored", encoding="utf-8")
             manifest = root / "integrity/files.sha256"
 
-            written = write_checksum_manifest(root, manifest, excludes={"ignored.txt", "integrity/files.sha256"})
-            self.assertEqual(["a/x.txt", "z.txt"], [item["path"] for item in written])
-            self.assertEqual(written, verify_checksum_manifest(root, manifest, excludes={"ignored.txt", "integrity/files.sha256"}))
+            written = write_checksum_manifest(root, excludes={"ignored.txt", "integrity/files.sha256"})
+            self.assertEqual(manifest, written)
+            rows = verify_checksum_manifest(root, manifest, excludes={"ignored.txt", "integrity/files.sha256"})
+            self.assertEqual(["a/x.txt", "z.txt"], [item["path"] for item in rows])
             self.assertEqual(
                 sorted(manifest.read_text(encoding="utf-8").splitlines()),
                 manifest.read_text(encoding="utf-8").splitlines(),

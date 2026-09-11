@@ -42,7 +42,7 @@ def package_delta(delta_dir: str | Path, base_dir: str | Path, requests_path: st
     (delta / "integrity").mkdir(parents=True, exist_ok=True)
     (delta / "integrity/validation-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     (delta / "DELTA-READY.json").write_text(json.dumps({"schema_version": "1.0.0", "delta_id": meta["delta_id"], "base_package_id": meta["base_package_id"], "counts": report["counts"]}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    write_checksum_manifest(delta, delta / "integrity/files.sha256", excludes=EXCLUDES)
+    write_checksum_manifest(delta, excludes=EXCLUDES)
     output.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(partial, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for path in sorted((p for p in delta.rglob("*") if p.is_file()), key=lambda p: p.relative_to(delta).as_posix()):
