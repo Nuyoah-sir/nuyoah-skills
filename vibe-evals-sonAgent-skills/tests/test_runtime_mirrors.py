@@ -61,21 +61,25 @@ class RuntimeMirrorTests(unittest.TestCase):
                 self.assertTrue((scripts / name).is_file(), f"{name} must be mirrored into the skill")
 
     def test_schemas_and_references_match_their_shared_sources(self):
-        skill = ROOT / "vibe-evals-son-complete-eval"
-        for relative, path in sorted(_runtime_files(skill / "schemas").items()):
-            canonical = SHARED_SCHEMA / relative
-            if not canonical.is_file():
-                continue  # v2.1-only schema shipped with the local form renderer
-            with self.subTest(schema=relative):
-                self.assertEqual(_sha256(canonical), _sha256(path), f"schemas/{relative} drifted from shared")
-        for name in ("gap-policy.json", "v21-labels.json"):
-            with self.subTest(reference=name):
-                self.assertEqual(_sha256(SHARED_REFERENCES / name), _sha256(skill / "references" / name))
+        for skill in ("vibe-evals-son-complete-eval", "vibe-evals-bundle-finalize"):
+            directory = ROOT / skill / "schemas"
+            if not directory.is_dir():
+                continue
+            for relative, path in sorted(_runtime_files(directory).items()):
+                canonical = SHARED_SCHEMA / relative
+                if not canonical.is_file():
+                    continue  # v2.1-only schema shipped with the local form renderer
+                with self.subTest(skill=skill, schema=relative):
+                    self.assertEqual(_sha256(canonical), _sha256(path), f"{skill}/schemas/{relative} drifted from shared")
+            for name in ("gap-policy.json", "v21-labels.json"):
+                reference = ROOT / skill / "references" / name
+                if not reference.is_file():
+                    continue
+                with self.subTest(skill=skill, reference=name):
+                    self.assertEqual(_sha256(SHARED_REFERENCES / name), _sha256(reference))
 
-    def test_import_closure_resolves_from_an_installed_layout(self):
-        """An installed skill must import cleanly with only its own scripts on the path."""
-
-        skill = ROOT / "vibe-evals-son-complete-eval"
+    def _import_closure(self, skill_name: str) -> None:
+        skill = ROOT / skill_name
         scripts = (skill / "scripts").resolve()
         probe = (
             "import importlib, io, contextlib, sys\n"
@@ -99,7 +103,30 @@ class RuntimeMirrorTests(unittest.TestCase):
             env={key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "PYTHONHOME"}},
         )
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertIn("[]", result.stdout, f"skill imports leaked outside its own tree: {result.stdout}{result.stderr}")
+        self.assertIn("[]", result.stdout, f"{skill_name} imports leaked outside its own tree: {result.stdout}{result.stderr}")
+
+    def test_import_closure_resolves_from_an_installed_layout(self):
+        """An installed skill must import cleanly with only its own scripts on the path."""
+
+        for skill in ("vibe-evals-son-complete-eval", "vibe-evals-bundle-finalize"):
+            with self.subTest(skill=skill):
+                self._import_closure(skill)
+
+    def test_every_mirrored_script_answers_help_from_the_installed_layout(self):
+        """--help must work from inside the skill, not from the repository shared tree."""
+
+        for skill in ("vibe-evals-son-complete-eval", "vibe-evals-bundle-finalize"):
+            scripts = ROOT / skill / "scripts"
+            if not scripts.is_dir():
+                continue
+            for path in sorted(scripts.glob("*.py")):
+                with self.subTest(skill=skill, script=path.name):
+                    result = subprocess.run(
+                        [sys.executable, str(path), "--help"],
+                        capture_output=True, text=True, check=False, cwd=str(scripts),
+                        env={key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "PYTHONHOME"}},
+                    )
+                    self.assertEqual(0, result.returncode, f"{skill}/{path.name} --help failed: {result.stderr}")
 
     def test_skill_entrypoint_declares_the_remote_complete_eval_contract(self):
         text = (ROOT / "vibe-evals-son-complete-eval" / "SKILL.md").read_text(encoding="utf-8")

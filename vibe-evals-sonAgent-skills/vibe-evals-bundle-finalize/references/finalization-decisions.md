@@ -1,5 +1,7 @@
 # 本机裁定与真实性判断
 
+> 适用范围：**v1 证据包与增量包**。form-ready 包的本机路径不产生任何裁定（见 [verify-and-render-runbook.md](verify-and-render-runbook.md)）；远端已经闭合的分数不要在本机重新裁定。
+
 ## 三档证据可信度
 
 1. `bundle_verified`：连续源码摘录 + 行号 + 原文件哈希，或原始测试日志/人工原文齐全。可以作为评分事实。

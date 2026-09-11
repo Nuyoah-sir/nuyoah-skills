@@ -1,9 +1,32 @@
 ---
 name: vibe-evals-bundle-finalize
-description: Use when a Vibe Evals evidence-bundle ZIP from another machine must be verified, reviewed, adjudicated, and converted into scored rubric JSONs, feedback artifacts, and the V2.1 multi-model scoring form. Do not use on an unvalidated raw report alone.
+description: Use when a Vibe Evals ZIP from another machine must be routed by schema — verify and render a form-ready bundle without any local adjudication, or finalize a v1 evidence bundle into scored rubric JSONs, feedback artifacts, and the V2.1 multi-model scoring form. Do not use on an unvalidated raw report alone.
 ---
 
 # Vibe Evals 证据包本机汇总
+
+## 第一步永远是按 schema 分流
+
+拿到任何 ZIP 之前先做这三步，顺序不可变：
+
+1. `verify_sidecar(archive, sidecar, expected_sha256)`。**在读取任何 ZIP 成员或中央目录之前**完成 sidecar 与期望摘要校验；这一步失败就停止，不要"先看看里面有什么"。
+2. 只有第 1 步通过后，才调用 `detect_artifact_kind`：它会先完整预检中央目录（路径穿越、大小写碰撞、符号链接、加密成员、压缩炸弹），再做有界的根清单解析，并且只认三种根清单：`FORM-READY.json`、`MANIFEST.json`、`DELTA.json`。
+3. 按检测结果分流：
+
+   - `vibe-evals-form-ready-bundle/2.0.0` → 走 [references/verify-and-render-runbook.md](references/verify-and-render-runbook.md) 的校验与渲染路径（本机**不做任何裁定**）。
+   - `vibe-evals-evidence-bundle/1.0.0` → 走既有的 prepare/finalize 路径。
+   - `vibe-evals-evidence-delta/1.0.0` → 走既有的补证合并路径。
+   - 其他版本或未知 schema → 停止，不要回退到旧路径。
+
+同时出现两个根清单、归一化重名、未知 schema、或任何 v2 错误，一律停止。**不允许**"看不懂就当 v1 处理"。
+
+## v2 包在本地被禁止的动作
+
+处理 form-ready 包时，本机**不得**创建或修改：人工裁定清单、补证请求（`evidence_requests.json`）、人工决定文件（`human-decisions.json`）、本地人工证据（`local-human-evidence.jsonl`）、任何替换分数、任何替补图片。
+
+远端给出的分数与裁定就是最终值；本机只校验、只渲染、只出收据。若包没闭合，正确动作是**停下并要求远端补齐**，不是本机替它判。
+
+唯一允许的成功产物：确定性渲染出的表单、远端报告与热力图的副本、以及 `verification-receipt.json`。
 
 ## 核心原则
 

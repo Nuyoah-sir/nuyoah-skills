@@ -1,4 +1,4 @@
 interface:
   display_name: "Vibe Evals Evidence Bundle Finalizer"
-  short_description: "Verify remote evidence and build the local V2.1 scoring artifacts"
-  default_prompt: "Use $vibe-evals-bundle-finalize to verify this evidence bundle, resolve review gates, and prepare the final V2.1 scoring form."
+  short_description: "Route by schema: render form-ready packages, finalize v1 evidence bundles"
+  default_prompt: "Use $vibe-evals-bundle-finalize on this ZIP: verify the sidecar first, detect the artifact kind, then either verify-and-render a form-ready package or run the legacy evidence finalization."

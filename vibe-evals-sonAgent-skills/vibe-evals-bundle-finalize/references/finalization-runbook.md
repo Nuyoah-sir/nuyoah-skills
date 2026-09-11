@@ -1,5 +1,7 @@
 # 本机汇总手把手运行手册
 
+> 先分流：本手册只用于 **v1 证据包**（`MANIFEST.json`）与**增量包**（`DELTA.json`）。如果 `detect_artifact_kind` 判定为 `vibe-evals-form-ready-bundle/2.0.0`，改走 [verify-and-render-runbook.md](verify-and-render-runbook.md)，本手册的 prepare/finalize 步骤**一概不适用**（那会给已完成评测的包再判一次分）。
+
 ## 1. 接收与解压
 
 要求同时拿到 `*.zip` 和 `*.zip.sha256`。使用技能目录的 `extract_artifact.py bundle`；它先核对文件名与哈希，再拒绝绝对路径、盘符、`..`、重复 ZIP 成员、符号链接和超大解压。

@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "form-ready-bundle.schema.json",
+  "title": "Vibe Evals form-ready bundle manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "outer_package_id", "base", "paths", "package_status"],
+  "properties": {
+    "schema": {"const": "vibe-evals-form-ready-bundle"},
+    "schema_version": {"const": "2.0.0"},
+    "outer_package_id": {"$ref": "#/$defs/uuid"},
+    "base": {
+      "type": "object", "additionalProperties": false,
+      "required": ["archive_path", "sha256_path", "sha256", "original_name", "package_id", "source_input_digest"],
+      "properties": {
+        "archive_path": {"const": "base/evidence-bundle.zip"},
+        "sha256_path": {"const": "base/evidence-bundle.zip.sha256"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "original_name": {"type": "string", "minLength": 1},
+        "package_id": {"type": "string", "minLength": 1},
+        "source_input_digest": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "paths": {
+      "type": "object", "additionalProperties": false,
+      "required": ["media_index", "machine_vision", "remote_human", "final_decisions", "criterion_classifications", "adjudication_audit", "source_verification", "run_state", "scored_dir", "presentation_input", "presentation_attestations", "report_input", "report", "heatmap", "form_input"],
+      "properties": {
+        "media_index": {"const": "observations/media-index.json"},
+        "machine_vision": {"const": "observations/machine-vision.jsonl"},
+        "remote_human": {"const": "observations/remote-human.jsonl"},
+        "final_decisions": {"const": "decisions/final-decisions.json"},
+        "criterion_classifications": {"const": "decisions/criterion-classifications.json"},
+        "adjudication_audit": {"const": "decisions/adjudication-audit.json"},
+        "source_verification": {"const": "integrity/source-verification.json"},
+        "run_state": {"const": "provenance/run-state.json"},
+        "scored_dir": {"const": "scored"},
+        "presentation_input": {"const": "presentation/presentation-input.json"},
+        "presentation_attestations": {"const": "presentation/presentation-attestations.jsonl"},
+        "report_input": {"const": "presentation/report-input.json"},
+        "report": {"const": "presentation/反馈报告.md"},
+        "heatmap": {"const": "presentation/rubrics打分热力图.html"},
+        "form_input": {"const": "presentation/form-input.json"}
+      }
+    },
+    "package_status": {"enum": ["incomplete", "ready_for_form"]}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "uuid": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+  },
+  "examples": [{"schema":"vibe-evals-form-ready-bundle","schema_version":"2.0.0","outer_package_id":"11111111-1111-4111-8111-111111111111","base":{"archive_path":"base/evidence-bundle.zip","sha256_path":"base/evidence-bundle.zip.sha256","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","original_name":"fictional-source.zip","package_id":"fictional-inner","source_input_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"paths":{"media_index":"observations/media-index.json","machine_vision":"observations/machine-vision.jsonl","remote_human":"observations/remote-human.jsonl","final_decisions":"decisions/final-decisions.json","criterion_classifications":"decisions/criterion-classifications.json","adjudication_audit":"decisions/adjudication-audit.json","source_verification":"integrity/source-verification.json","run_state":"provenance/run-state.json","scored_dir":"scored","presentation_input":"presentation/presentation-input.json","presentation_attestations":"presentation/presentation-attestations.jsonl","report_input":"presentation/report-input.json","report":"presentation/反馈报告.md","heatmap":"presentation/rubrics打分热力图.html","form_input":"presentation/form-input.json"},"package_status":"incomplete"}]
+}
