@@ -82,7 +82,6 @@ def make_form_ready_workspace(root: Path, *, complete: bool, mutate_bundle=None,
     inner_source = make_bundle(root / "inner-work")
     task_root = root / "task-source"
     task_root.mkdir(parents=True)
-    (task_root / "target.png").write_bytes(FIXTURE_PNG)
     freeze_path = inner_source / "source-freeze.json"
     freeze = json.loads(freeze_path.read_text(encoding="utf-8"))
     media_row = {"path": "target.png", "size": len(FIXTURE_PNG), "sha256": hashlib.sha256(FIXTURE_PNG).hexdigest()}
@@ -94,6 +93,7 @@ def make_form_ready_workspace(root: Path, *, complete: bool, mutate_bundle=None,
     inner_manifest = json.loads(inner_manifest_path.read_text(encoding="utf-8"))
     inner_manifest["source_input_digest"] = freeze["input_digest"]
     write_json(inner_manifest_path, inner_manifest)
+    build_task_root(task_root, inner_source, freeze)
     if mutate_bundle is not None:
         mutate_bundle(inner_source)
     source_archive = root / "source-name.zip"
@@ -165,6 +165,29 @@ def _identity_binding(outer: Path, task_id: str) -> dict:
         "source_input_digest": manifest["base"]["source_input_digest"],
         "task_id": task_id,
     }
+
+
+def build_task_root(task_root: Path, bundle: Path, freeze: dict) -> None:
+    """Recreate a task root that matches the frozen inventory byte for byte."""
+
+    for row in freeze["source_inventory"]:
+        relative = row["path"]
+        if row["sha256"] == hashlib.sha256(FIXTURE_PNG).hexdigest():
+            data = FIXTURE_PNG
+        elif relative.endswith("prompt.md"):
+            data = (bundle / "inputs" / "prompt.md").read_bytes()
+        elif relative.endswith(".json") and (bundle / "inputs" / "rubrics" / Path(relative).name).is_file():
+            data = (bundle / "inputs" / "rubrics" / Path(relative).name).read_bytes()
+        else:
+            blob = bundle / "evidence" / "source-blobs" / f"{row['sha256']}.txt"
+            if not blob.is_file():
+                raise FileNotFoundError(f"Fixture cannot reconstruct frozen source {relative!r}")
+            data = blob.read_bytes()
+        if hashlib.sha256(data).hexdigest() != row["sha256"]:
+            raise ValueError(f"Fixture reconstruction for {relative!r} does not match the freeze")
+        target = task_root.joinpath(*relative.split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
 
 
 def _register_candidate_render(outer: Path, binding: dict) -> str:

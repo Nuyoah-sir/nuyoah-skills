@@ -50,6 +50,32 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 _DRIVE = re.compile(r"^[A-Za-z]:")
 _SHARED_ROOT = Path(__file__).resolve().parents[1]
+FORM_READY_EXCLUDES = frozenset({"READY.json", "integrity/files.sha256", "integrity/validation-report.json"})
+
+
+def _stage_seal(root_path: Path, manifest: dict[str, Any], errors: list[dict[str, str]]) -> None:
+    """Stage 2: the outer seal, when the caller requires it."""
+
+    from artifact_integrity import verify_checksum_manifest
+
+    expected = {"READY.json": root_path / "READY.json",
+                "integrity/files.sha256": root_path / "integrity" / "files.sha256",
+                "integrity/validation-report.json": root_path / "integrity" / "validation-report.json"}
+    missing = sorted(name for name, path in expected.items() if not path.is_file())
+    if missing:
+        errors.append(issue("SEAL_MISSING", f"Sealed packages need these files: {missing}", "READY.json"))
+        return
+    try:
+        verify_checksum_manifest(root_path, expected["integrity/files.sha256"], excludes=set(FORM_READY_EXCLUDES))
+        ready = _read_json(expected["READY.json"])
+        report = _read_json(expected["integrity/validation-report.json"])
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        errors.append(issue("SEAL_INVALID", f"Outer seal does not verify: {exc}", "integrity/files.sha256"))
+        return
+    if not isinstance(ready, dict) or ready.get("status") != "ready_for_form" or ready.get("outer_package_id") != manifest.get("outer_package_id"):
+        errors.append(issue("SEAL_INVALID", "READY.json must name this package as ready_for_form", "READY.json"))
+    if not isinstance(report, dict) or report.get("result") != "pass" or report.get("derived_status") != "ready_for_form":
+        errors.append(issue("SEAL_INVALID", "Sealed validation report must record a passing ready_for_form assessment", "integrity/validation-report.json"))
 
 
 def _gap_policy() -> dict:
@@ -232,6 +258,8 @@ def _check_present_record_identities(root: Path, manifest: dict[str, Any], conte
 
 def _stage_media_coverage(root_path: Path, manifest: dict[str, Any], errors: list[dict[str, str]], counts: dict[str, int]) -> None:
     """Stage 5: exact media registry coverage and byte agreement."""
+
+    from register_media import inspect_image
 
     from register_media import inspect_image
 
@@ -564,7 +592,12 @@ def validate_form_ready(root: str | Path, require_seal: bool = False, scratch_ro
     if manifest.get("package_status") != report["derived_status"]:
         report["errors"].append(issue("STATUS_MISMATCH", f"Manifest={manifest.get('package_status')!r}, derived={report['derived_status']!r}"))
     if require_seal:
-        report["errors"].append(issue("SEAL_VALIDATION_UNAVAILABLE", "Outer seal validation is introduced by the packaging stage"))
+        try:
+            manifest_for_seal = _read_json(Path(root) / "FORM-READY.json")
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            manifest_for_seal = {}
+        if isinstance(manifest_for_seal, dict) and manifest_for_seal:
+            _stage_seal(Path(root), manifest_for_seal, report["errors"])
     report["result"] = "pass" if not report["errors"] else "fail"
     if report["errors"]:
         report["derived_status"] = "incomplete"
