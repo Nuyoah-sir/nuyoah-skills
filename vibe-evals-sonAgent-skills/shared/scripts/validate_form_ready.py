@@ -15,6 +15,7 @@ from typing import Any
 
 from artifact_integrity import _walk_safe_files, safe_extract_zip, verify_sidecar
 from form_ready_context import BaseContext, load_base_context
+from validate_final_decisions import validate_observation_provenance
 from validate_bundle import validate_bundle
 
 SCHEMA = "vibe-evals-form-ready-bundle"
@@ -315,6 +316,10 @@ def assess_form_ready(root: str | Path) -> dict[str, Any]:
                         if mismatches:
                             _add_identity_error(errors, "FORM-READY.json#/base", f"Base identity mismatch: {mismatches}")
                         _check_present_record_identities(root_path, manifest, context, errors)
+                        try:
+                            validate_observation_provenance(root_path, manifest, context, errors)
+                        except (OSError, UnicodeError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                            errors.append(issue("OBSERVATION_VALIDATION_FAILED", str(exc), "observations"))
             except (OSError, UnicodeError, ValueError, KeyError, TypeError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
                 errors.append(issue("BASE_INTEGRITY_FAILED", str(exc), str(archive_relative)))
     derived = "ready_for_form" if not errors else "incomplete"

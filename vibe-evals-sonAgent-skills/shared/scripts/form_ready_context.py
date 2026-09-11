@@ -24,6 +24,17 @@ class BaseContext:
     human_check_pairs: frozenset[tuple[str, str]] = frozenset()
 
 
+@dataclass(frozen=True)
+class ObservationRegistry:
+    """Normalized view of the outer observation and classification records."""
+
+    vision: tuple[dict[str, Any], ...]
+    human: tuple[dict[str, Any], ...]
+    classifications: dict[str, dict[str, Any]]
+    media_roles: dict[str, str]
+    media_status: dict[str, str]
+
+
 def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -85,4 +96,53 @@ def load_base_context(extracted_base: str | Path) -> BaseContext:
     )
 
 
-__all__ = ["BaseContext", "load_base_context"]
+def _optional_jsonl(root: Path, relative: Any) -> tuple[dict[str, Any], ...]:
+    if not isinstance(relative, str) or not relative:
+        return ()
+    path = root.joinpath(*relative.split("/"))
+    if not path.is_file():
+        return ()
+    return tuple(_read_jsonl(path))
+
+
+def _optional_json(root: Path, relative: Any) -> Any:
+    if not isinstance(relative, str) or not relative:
+        return None
+    path = root.joinpath(*relative.split("/"))
+    if not path.is_file():
+        return None
+    try:
+        return _read_json(path)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+
+
+def load_observation_registry(root: str | Path, manifest: dict[str, Any]) -> ObservationRegistry:
+    """Read the outer observation records exactly as written, without repairing them."""
+
+    base = Path(root)
+    paths = manifest.get("paths", {}) if isinstance(manifest, dict) else {}
+    classifications: dict[str, dict[str, Any]] = {}
+    classification_doc = _optional_json(base, paths.get("criterion_classifications"))
+    if isinstance(classification_doc, dict):
+        for record in classification_doc.get("records", []) or []:
+            if isinstance(record, dict) and isinstance(record.get("rubric_id"), str):
+                classifications[record["rubric_id"]] = record
+    media_roles: dict[str, str] = {}
+    media_status: dict[str, str] = {}
+    media_doc = _optional_json(base, paths.get("media_index"))
+    if isinstance(media_doc, dict) and isinstance(media_doc.get("uses"), dict):
+        for media_id, use in media_doc["uses"].items():
+            if isinstance(use, dict):
+                media_roles[media_id] = use.get("role")
+                media_status[media_id] = use.get("status", "registered")
+    return ObservationRegistry(
+        vision=_optional_jsonl(base, paths.get("machine_vision")),
+        human=_optional_jsonl(base, paths.get("remote_human")),
+        classifications=classifications,
+        media_roles=media_roles,
+        media_status=media_status,
+    )
+
+
+__all__ = ["BaseContext", "ObservationRegistry", "load_base_context", "load_observation_registry"]
