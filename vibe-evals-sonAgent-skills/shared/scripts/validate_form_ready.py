@@ -1,0 +1,350 @@
+#!/usr/bin/env python3
+"""Validate the immutable-base shell of a form-ready bundle v2 workspace."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shutil
+import sys
+import tempfile
+import zipfile
+from pathlib import Path, PurePosixPath
+from typing import Any
+
+from artifact_integrity import _walk_safe_files, safe_extract_zip, verify_sidecar
+from form_ready_context import BaseContext, load_base_context
+from validate_bundle import validate_bundle
+
+SCHEMA = "vibe-evals-form-ready-bundle"
+SCHEMA_VERSION = "2.0.0"
+PACKAGE_STATUSES = frozenset({"incomplete", "ready_for_form"})
+REQUIRED_MANIFEST_FIELDS = frozenset({"schema", "schema_version", "outer_package_id", "base", "paths", "package_status"})
+REQUIRED_BASE_FIELDS = frozenset({"archive_path", "sha256_path", "sha256", "original_name", "package_id", "source_input_digest"})
+REQUIRED_PATHS = {
+    "media_index": "observations/media-index.json",
+    "machine_vision": "observations/machine-vision.jsonl",
+    "remote_human": "observations/remote-human.jsonl",
+    "final_decisions": "decisions/final-decisions.json",
+    "criterion_classifications": "decisions/criterion-classifications.json",
+    "adjudication_audit": "decisions/adjudication-audit.json",
+    "source_verification": "integrity/source-verification.json",
+    "run_state": "provenance/run-state.json",
+    "scored_dir": "scored",
+    "presentation_input": "presentation/presentation-input.json",
+    "presentation_attestations": "presentation/presentation-attestations.jsonl",
+    "report_input": "presentation/report-input.json",
+    "report": "presentation/反馈报告.md",
+    "heatmap": "presentation/rubrics打分热力图.html",
+    "form_input": "presentation/form-input.json",
+}
+ALLOWED_MANIFEST_FIELDS = REQUIRED_MANIFEST_FIELDS
+ALLOWED_BASE_FIELDS = REQUIRED_BASE_FIELDS
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
+_DRIVE = re.compile(r"^[A-Za-z]:")
+
+
+def issue(code: str, message: str, path: str = "FORM-READY.json") -> dict[str, str]:
+    return {"code": code, "message": message, "path": path}
+
+
+def _safe_relative(value: Any) -> bool:
+    if not isinstance(value, str) or not value or "\x00" in value:
+        return False
+    normalized = value.replace("\\", "/")
+    if normalized.startswith(("/", "//")) or _DRIVE.match(normalized):
+        return False
+    parts = normalized.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        return False
+    return PurePosixPath(*parts).as_posix() == normalized
+
+
+def _read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _add_identity_error(errors: list[dict[str, str]], path: str, detail: str) -> None:
+    errors.append(issue("IDENTITY_MISMATCH", detail, path))
+
+
+def _check_envelope(
+    value: Any,
+    *,
+    errors: list[dict[str, str]],
+    path: str,
+    manifest: dict[str, Any],
+    context: BaseContext,
+    rubric_by_id: dict[str, dict[str, Any]],
+    require_model_rubric: bool,
+) -> None:
+    if not isinstance(value, dict):
+        return
+    expected = {
+        "outer_package_id": manifest.get("outer_package_id"),
+        "base_package_id": context.package_id,
+        "base_zip_sha256": manifest.get("base", {}).get("sha256"),
+        "source_input_digest": context.source_input_digest,
+        "task_id": context.task_id,
+    }
+    required = set(expected)
+    if require_model_rubric:
+        required.update({"model_id", "rubric_id", "round", "criterion_sha256"})
+    missing = sorted(key for key in required if key not in value)
+    if missing:
+        _add_identity_error(errors, path, f"Identity envelope is missing fields: {missing}")
+        return
+    mismatched = sorted(key for key, expected_value in expected.items() if value.get(key) != expected_value)
+    model_id = value.get("model_id")
+    rubric_id = value.get("rubric_id")
+    if model_id is not None and model_id not in context.models:
+        mismatched.append("model_id")
+    rubric = rubric_by_id.get(rubric_id) if rubric_id is not None else None
+    if rubric_id is not None and rubric is None:
+        mismatched.append("rubric_id")
+    elif rubric is not None:
+        if value.get("round") != rubric.get("round"):
+            mismatched.append("round")
+        if value.get("criterion_sha256") != rubric.get("criterion_sha256"):
+            mismatched.append("criterion_sha256")
+    if mismatched:
+        _add_identity_error(errors, path, f"Identity fields do not match the immutable base: {sorted(set(mismatched))}")
+
+
+def _check_present_record_identities(root: Path, manifest: dict[str, Any], context: BaseContext, errors: list[dict[str, str]]) -> None:
+    """Check identity only; later validator stages own record semantics."""
+
+    rubric_by_id = {row.get("id"): row for row in context.rubrics}
+    paths = manifest.get("paths", {})
+    media_relative = paths.get("media_index")
+    if _safe_relative(media_relative):
+        media_path = root.joinpath(*PurePosixPath(media_relative).parts)
+        if media_path.is_file():
+            try:
+                media = _read_json(media_path)
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                errors.append(issue("RECORD_INVALID", f"Cannot parse media index: {exc}", media_relative))
+                media = {}
+            if isinstance(media, dict):
+                if media.get("outer_package_id") != manifest.get("outer_package_id"):
+                    _add_identity_error(errors, media_relative, "Media index outer_package_id does not match")
+                uses = media.get("uses", {})
+                if isinstance(uses, dict):
+                    for media_id, use in uses.items():
+                        bindings = use.get("bindings") if isinstance(use, dict) else None
+                        if not isinstance(bindings, list) or not bindings:
+                            _add_identity_error(errors, f"{media_relative}#/uses/{media_id}", "Media use requires at least one scoped identity binding")
+                            continue
+                        for index, binding in enumerate(bindings):
+                            _check_envelope(binding, errors=errors, path=f"{media_relative}#/uses/{media_id}/bindings/{index}", manifest=manifest, context=context, rubric_by_id=rubric_by_id, require_model_rubric=False)
+    json_record_keys = ("final_decisions", "criterion_classifications", "adjudication_audit", "form_input")
+    for key in json_record_keys:
+        relative = paths.get(key)
+        if not _safe_relative(relative):
+            continue
+        file_path = root.joinpath(*PurePosixPath(relative).parts)
+        if not file_path.is_file():
+            continue
+        try:
+            document = _read_json(file_path)
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            errors.append(issue("RECORD_INVALID", f"Cannot parse record document: {exc}", relative))
+            continue
+        if key == "form_input":
+            _check_envelope(document, errors=errors, path=relative, manifest=manifest, context=context, rubric_by_id=rubric_by_id, require_model_rubric=False)
+        records = document.get("records", []) if isinstance(document, dict) else []
+        if not isinstance(records, list):
+            continue
+        for index, record in enumerate(records):
+            _check_envelope(
+                record,
+                errors=errors,
+                path=f"{relative}#/records/{index}",
+                manifest=manifest,
+                context=context,
+                rubric_by_id=rubric_by_id,
+                require_model_rubric=key in {"final_decisions", "adjudication_audit", "form_input"},
+            )
+    for key in ("machine_vision", "remote_human"):
+        relative = paths.get(key)
+        if not _safe_relative(relative):
+            continue
+        file_path = root.joinpath(*PurePosixPath(relative).parts)
+        if not file_path.is_file():
+            continue
+        try:
+            lines = file_path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError):
+            continue
+        for line_number, line in enumerate(lines, 1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as exc:
+                errors.append(issue("RECORD_INVALID", f"Cannot parse JSONL record: {exc}", f"{relative}:{line_number}"))
+                continue
+            _check_envelope(record, errors=errors, path=f"{relative}:{line_number}", manifest=manifest, context=context, rubric_by_id=rubric_by_id, require_model_rubric=True)
+
+
+def assess_form_ready(root: str | Path) -> dict[str, Any]:
+    """Assess the v2 base chain without requiring an outer seal or declared status."""
+
+    root_path = Path(root)
+    errors: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    manifest: dict[str, Any] = {}
+    try:
+        _walk_safe_files(root_path)
+    except (OSError, ValueError) as exc:
+        errors.append(issue("ARTIFACT_TREE_UNSAFE", str(exc), "."))
+        return {"validator_version": SCHEMA_VERSION, "result": "fail", "derived_status": "incomplete", "errors": errors, "warnings": warnings}
+    try:
+        value = _read_json(root_path / "FORM-READY.json")
+        if not isinstance(value, dict):
+            raise ValueError("root value is not an object")
+        manifest = value
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        errors.append(issue("MANIFEST_INVALID", f"Cannot read FORM-READY.json: {exc}"))
+    if manifest:
+        missing = sorted(REQUIRED_MANIFEST_FIELDS - set(manifest))
+        if missing:
+            errors.append(issue("MANIFEST_FIELDS_MISSING", f"Missing manifest fields: {missing}"))
+        extra = sorted(set(manifest) - ALLOWED_MANIFEST_FIELDS)
+        if extra:
+            errors.append(issue("MANIFEST_SHAPE_INVALID", f"Unexpected manifest fields: {extra}"))
+        if manifest.get("schema") != SCHEMA or manifest.get("schema_version") != SCHEMA_VERSION:
+            errors.append(issue("SCHEMA_UNSUPPORTED", f"Expected {SCHEMA}/{SCHEMA_VERSION}"))
+        if _UUID.fullmatch(str(manifest.get("outer_package_id", ""))) is None:
+            errors.append(issue("OUTER_PACKAGE_ID_INVALID", "outer_package_id must be a canonical lowercase UUID"))
+        if manifest.get("package_status") not in PACKAGE_STATUSES:
+            errors.append(issue("PACKAGE_STATUS_INVALID", f"package_status must be one of {sorted(PACKAGE_STATUSES)}"))
+        base = manifest.get("base")
+        if not isinstance(base, dict):
+            errors.append(issue("BASE_INVALID", "base must be an object"))
+            base = {}
+        missing_base = sorted(REQUIRED_BASE_FIELDS - set(base))
+        if missing_base:
+            errors.append(issue("BASE_FIELDS_MISSING", f"Missing base fields: {missing_base}"))
+        extra_base = sorted(set(base) - ALLOWED_BASE_FIELDS)
+        if extra_base:
+            errors.append(issue("MANIFEST_SHAPE_INVALID", f"Unexpected base fields: {extra_base}", "FORM-READY.json#/base"))
+        paths = manifest.get("paths")
+        if not isinstance(paths, dict):
+            errors.append(issue("PATHS_INVALID", "paths must be an object"))
+            paths = {}
+        extra_paths = sorted(set(paths) - set(REQUIRED_PATHS))
+        if extra_paths:
+            errors.append(issue("MANIFEST_SHAPE_INVALID", f"Unexpected path fields: {extra_paths}", "FORM-READY.json#/paths"))
+        for key, expected in REQUIRED_PATHS.items():
+            actual = paths.get(key)
+            if not _safe_relative(actual):
+                errors.append(issue("UNSAFE_PATH", f"paths.{key} is not a safe POSIX package-relative path", f"FORM-READY.json#/paths/{key}"))
+            elif actual != expected:
+                errors.append(issue("PATH_MISMATCH", f"paths.{key} must be {expected!r}", f"FORM-READY.json#/paths/{key}"))
+        for key, expected in (("archive_path", "base/evidence-bundle.zip"), ("sha256_path", "base/evidence-bundle.zip.sha256")):
+            actual = base.get(key)
+            if not _safe_relative(actual):
+                errors.append(issue("UNSAFE_PATH", f"base.{key} is not a safe POSIX package-relative path", f"FORM-READY.json#/base/{key}"))
+            elif actual != expected:
+                errors.append(issue("BASE_PATH_MISMATCH", f"base.{key} must be {expected!r}", f"FORM-READY.json#/base/{key}"))
+        if _SHA256.fullmatch(str(base.get("sha256", ""))) is None:
+            errors.append(issue("BASE_SHA256_INVALID", "base.sha256 must be 64 lowercase hexadecimal characters", "FORM-READY.json#/base/sha256"))
+        if _SHA256.fullmatch(str(base.get("source_input_digest", ""))) is None:
+            errors.append(issue("SOURCE_DIGEST_INVALID", "base.source_input_digest must be 64 lowercase hexadecimal characters", "FORM-READY.json#/base/source_input_digest"))
+        if not isinstance(base.get("package_id"), str) or not base.get("package_id"):
+            errors.append(issue("BASE_PACKAGE_ID_INVALID", "base.package_id must be a nonempty string", "FORM-READY.json#/base/package_id"))
+        original_name = base.get("original_name")
+        if not _safe_relative(original_name) or "/" in str(original_name).replace("\\", "/"):
+            errors.append(issue("UNSAFE_PATH", "base.original_name must be a single safe filename", "FORM-READY.json#/base/original_name"))
+
+        archive_relative = base.get("archive_path")
+        sidecar_relative = base.get("sha256_path")
+        can_open_base = (
+            manifest.get("schema") == SCHEMA
+            and manifest.get("schema_version") == SCHEMA_VERSION
+            and archive_relative == "base/evidence-bundle.zip"
+            and sidecar_relative == "base/evidence-bundle.zip.sha256"
+            and _SHA256.fullmatch(str(base.get("sha256", ""))) is not None
+        )
+        if can_open_base:
+            archive = root_path.joinpath(*PurePosixPath(archive_relative).parts)
+            sidecar = root_path.joinpath(*PurePosixPath(sidecar_relative).parts)
+            try:
+                with tempfile.TemporaryDirectory(prefix="vibe-form-ready-base-") as temporary:
+                    staged_archive = Path(temporary) / "evidence-bundle.zip"
+                    with archive.open("rb") as source, staged_archive.open("xb") as target:
+                        shutil.copyfileobj(source, target, length=1024 * 1024)
+                    verified_digest = verify_sidecar(staged_archive, sidecar, base.get("sha256"))
+                    extracted = safe_extract_zip(staged_archive, Path(temporary) / "bundle")
+                    inner_report = validate_bundle(extracted, require_seal=True)
+                    if inner_report.get("result") != "pass":
+                        errors.append(issue("BASE_VALIDATION_FAILED", "Inner evidence bundle failed strict sealed validation", archive_relative))
+                    else:
+                        context = load_base_context(extracted)
+                        mismatches = []
+                        if base.get("package_id") != context.package_id:
+                            mismatches.append("package_id")
+                        if base.get("source_input_digest") != context.source_input_digest:
+                            mismatches.append("source_input_digest")
+                        if base.get("sha256") != verified_digest:
+                            mismatches.append("sha256")
+                        if mismatches:
+                            _add_identity_error(errors, "FORM-READY.json#/base", f"Base identity mismatch: {mismatches}")
+                        _check_present_record_identities(root_path, manifest, context, errors)
+            except (OSError, UnicodeError, ValueError, KeyError, TypeError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
+                errors.append(issue("BASE_INTEGRITY_FAILED", str(exc), str(archive_relative)))
+    derived = "ready_for_form" if not errors else "incomplete"
+    return {
+        "validator_version": SCHEMA_VERSION,
+        "result": "pass" if not errors else "fail",
+        "derived_status": derived,
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def validate_form_ready(root: str | Path, require_seal: bool = False) -> dict[str, Any]:
+    """Validate base assessment and declared status; outer sealing arrives in Task 8."""
+
+    report = assess_form_ready(root)
+    try:
+        manifest = _read_json(Path(root) / "FORM-READY.json")
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        manifest = {}
+    if manifest.get("package_status") != report["derived_status"]:
+        report["errors"].append(issue("STATUS_MISMATCH", f"Manifest={manifest.get('package_status')!r}, derived={report['derived_status']!r}"))
+    if require_seal:
+        report["errors"].append(issue("SEAL_VALIDATION_UNAVAILABLE", "Outer seal validation is introduced by the packaging stage"))
+    report["result"] = "pass" if not report["errors"] else "fail"
+    if report["errors"]:
+        report["derived_status"] = "incomplete"
+    return report
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("root", type=Path)
+    parser.add_argument("--require-seal", action="store_true")
+    args = parser.parse_args(argv)
+    report = validate_form_ready(args.root, require_seal=args.require_seal)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0 if report["result"] == "pass" else 3
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+__all__ = [
+    "PACKAGE_STATUSES",
+    "REQUIRED_BASE_FIELDS",
+    "REQUIRED_MANIFEST_FIELDS",
+    "REQUIRED_PATHS",
+    "SCHEMA",
+    "SCHEMA_VERSION",
+    "assess_form_ready",
+    "validate_form_ready",
+]

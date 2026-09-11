@@ -1,0 +1,5 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","$id":"form-input.schema.json","type":"object","additionalProperties":true,
+  "required":["schema_version","outer_package_id","base_package_id","base_zip_sha256","source_input_digest","task_id","records"],
+  "properties":{"schema_version":{"const":"2.0.0"},"outer_package_id":{"type":"string"},"base_package_id":{"type":"string"},"base_zip_sha256":{"$ref":"#/$defs/sha"},"source_input_digest":{"$ref":"#/$defs/sha"},"task_id":{"type":"string"},"records":{"type":"array","items":{"type":"object"}}},"$defs":{"sha":{"type":"string","pattern":"^[0-9a-f]{64}$"}},"examples":[{"schema_version":"2.0.0","outer_package_id":"fictional","base_package_id":"fictional","base_zip_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source_input_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","task_id":"fictional","records":[]}]
+}
