@@ -16,9 +16,28 @@ Nuyoah 的个人 Agent Skills 仓库，用于存放、版本管理与跨机器�
 
 | 技能 | 安装位置 | 作用 |
 | --- | --- | --- |
-| `vibe-evals-son-evidence-export` | 第三方机器 | 只读探测题包，冻结输入与轮次，逐模型取证，生成带校验和的 evidence bundle ZIP。 |
-| `vibe-evals-son-evidence-supplement` | 第三方机器 | 严格按本机 `evidence_requests.json` 补证，生成不可改写请求范围的 delta ZIP。 |
-| `vibe-evals-bundle-finalize` | 本机 | 安全解压、重验、人工裁定、合并补证、生成 scored rubrics、报告、热力图和 V2.1 表单。 |
+| `vibe-evals-son-complete-eval` | 第三方机器（**默认**） | 从原始题包一路做完：取证、渲染、观测、裁定、评分、演示产物，最后封出一个 form-ready ZIP。 |
+| `vibe-evals-son-evidence-export` | 第三方机器（legacy） | 只导出证据，由本机另行评分。 |
+| `vibe-evals-son-evidence-supplement` | 第三方机器（legacy） | 按 `evidence_requests.json` 对证据包补证。 |
+| `vibe-evals-bundle-finalize` | 本机 | 先按 schema 分流：form-ready 包做校验与渲染（**不做任何本地裁定**）；v1 证据包走既有汇总流程。 |
+
+默认远程提示词：
+
+```text
+使用 $vibe-evals-son-complete-eval 完成这整套评测。
+题目包根目录：<绝对路径>
+输出根目录：<绝对路径>
+```
+
+默认本机提示词：
+
+```text
+使用 $vibe-evals-bundle-finalize 校验并渲染这个 form-ready 包。
+ZIP：<绝对路径>
+sidecar：<绝对路径>
+期望 SHA-256：<可选，建议填写>
+输出目录：<绝对路径，必须不存在>
+```
 
 套件同时提供 PowerShell 安装脚本、完整测试、协议说明和[最新可分发 ZIP v1.0.2](vibe-evals-sonAgent-skills/dist/vibe-evals-sonAgent-skills-v1.0.2.zip)。第三方机器无需把完整题包复制回本机；证据包保留源码原文字节、内容哈希、轮次绑定、测试脚本/日志、对话绑定和人工裁定审计链。v1.0.2 兼容题包 rubric 中数字轮次与 `"R1"/"R2"` 字符串轮次，并在不改原始 rubric 字节的前提下生成统一数字元数据。
 
