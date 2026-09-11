@@ -289,6 +289,9 @@ def _stage_media_coverage(root_path: Path, manifest: dict[str, Any], errors: lis
             continue
         if use.get("status", "registered") != "registered":
             counts["unresolved_media"] += 1
+            errors.append(issue("MEDIA_UNRESOLVED_USE",
+                                "A planned review medium was never registered",
+                                f"{relative}#/uses/{media_id}"))
             continue
         if use.get("blob_sha256") not in blobs:
             errors.append(issue("MEDIA_USE_INVALID", "A registered media use must reference an indexed blob", f"{relative}#/uses/{media_id}"))

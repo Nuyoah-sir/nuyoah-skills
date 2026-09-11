@@ -324,5 +324,90 @@ class FormReadyClosureTests(unittest.TestCase):
         self.assertIn("DECISION_COVERAGE_MISSING", {row["code"] for row in report["errors"]})
 
 
+class FormReadyCrossCheckTests(unittest.TestCase):
+    """Task 7 step 2: media bytes, replays, and form bindings must agree."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.fixture = make_form_ready_workspace(self.root, complete=False, closed=True)
+        self.outer = self.fixture.outer
+
+    def _codes(self):
+        report = assess_form_ready(self.outer)
+        return {row["code"] for row in report["errors"]}, report
+
+    def _index(self) -> Path:
+        return self.outer / "observations/media-index.json"
+
+    def test_rejects_missing_wrong_and_unindexed_media_blobs(self):
+        index = json.loads(self._index().read_text(encoding="utf-8"))
+        blob = next(iter(index["blobs"].values()))
+        target = self.outer.joinpath(*blob["path"].split("/"))
+        original = target.read_bytes()
+
+        target.unlink()
+        codes, _ = self._codes()
+        self.assertIn("MEDIA_BLOB_MISSING", codes)
+
+        target.write_bytes(original + b"\x00")
+        codes, _ = self._codes()
+        self.assertIn("MEDIA_BLOB_MISMATCH", codes)
+
+        target.write_bytes(original)
+        stray = self.outer / "observations/renders/stray.png"
+        stray.write_bytes(original)
+        codes, _ = self._codes()
+        self.assertIn("MEDIA_COVERAGE_MISMATCH", codes)
+        stray.unlink()
+
+        document = json.loads(self._index().read_text(encoding="utf-8"))
+        document["uses"]["MEDIA-target"]["status"] = "unresolved"
+        self._index().write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        codes, report = self._codes()
+        self.assertEqual(1, report["counts"]["unresolved_media"])
+        self.assertNotEqual("ready_for_form", report["derived_status"])
+
+    def test_rejects_scored_and_supporting_output_drift(self):
+        scored = self.outer / "scored/rubrics-model-a.json"
+        rows = json.loads(scored.read_text(encoding="utf-8"))
+        rows[0]["score"] = 0 if rows[0]["score"] == 1 else 1
+        scored.write_text(json.dumps(rows, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        codes, _ = self._codes()
+        self.assertIn("SCORED_REPLAY_DRIFT", codes)
+
+        self.fixture = make_form_ready_workspace(self.root / "second", complete=False, closed=True)
+        self.outer = self.fixture.outer
+        heatmap = self.outer / "presentation/rubrics打分热力图.html"
+        heatmap.write_text(heatmap.read_text(encoding="utf-8").replace("score-1", "score-0"), encoding="utf-8")
+        codes, _ = self._codes()
+        self.assertIn("SUPPORTING_OUTPUT_DRIFT", codes)
+
+    def test_rejects_form_input_binding_and_unknown_model_records(self):
+        path = self.outer / "presentation/form-input.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["scored_sha256"]["model-a"] = "0" * 64
+        path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        codes, _ = self._codes()
+        self.assertIn("FORM_INPUT_BINDING_MISMATCH", codes)
+
+        document["scored_sha256"]["model-a"] = hashlib.sha256((self.outer / "scored/rubrics-model-a.json").read_bytes()).hexdigest()
+        document["records"].append({"model_id": "model-ghost"})
+        path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        codes, _ = self._codes()
+        self.assertIn("FORM_INPUT_BINDING_MISMATCH", codes)
+
+    def test_rejects_a_decision_that_teaches_a_different_scored_value(self):
+        path = self.outer / "decisions/final-decisions.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["records"][0]["score"] = 0
+        document["records"][0]["evidence_ids"] = ["EV-model-a-R1-01-001"]
+        path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        codes, report = self._codes()
+        self.assertIn("DECISION_EVIDENCE_DIRECTION", codes)
+        self.assertNotEqual("ready_for_form", report["derived_status"])
+
+
 if __name__ == "__main__":
     unittest.main()
