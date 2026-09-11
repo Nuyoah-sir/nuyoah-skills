@@ -63,7 +63,7 @@ def _criterion_digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def make_form_ready_workspace(root: Path, *, complete: bool) -> FormReadyFixture:
+def make_form_ready_workspace(root: Path, *, complete: bool, mutate_bundle=None) -> FormReadyFixture:
     """Build a real sealed v1 package nested byte-for-byte in an unsealed v2 tree."""
 
     root = Path(root)
@@ -82,6 +82,8 @@ def make_form_ready_workspace(root: Path, *, complete: bool) -> FormReadyFixture
     inner_manifest = json.loads(inner_manifest_path.read_text(encoding="utf-8"))
     inner_manifest["source_input_digest"] = freeze["input_digest"]
     write_json(inner_manifest_path, inner_manifest)
+    if mutate_bundle is not None:
+        mutate_bundle(inner_source)
     source_archive = root / "source-name.zip"
     package_bundle(inner_source, source_archive)
     inspected = safe_extract_zip(source_archive, root / "inspected-inner")

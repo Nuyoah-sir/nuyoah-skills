@@ -15,7 +15,7 @@ from typing import Any
 
 from artifact_integrity import _walk_safe_files, safe_extract_zip, verify_sidecar
 from form_ready_context import BaseContext, load_base_context
-from validate_final_decisions import validate_observation_provenance
+from validate_final_decisions import GAP_POLICY_JSON, load_gap_policy, validate_final_decisions, validate_observation_provenance
 from validate_bundle import validate_bundle
 
 SCHEMA = "vibe-evals-form-ready-bundle"
@@ -45,6 +45,16 @@ ALLOWED_BASE_FIELDS = REQUIRED_BASE_FIELDS
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 _DRIVE = re.compile(r"^[A-Za-z]:")
+_SHARED_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _gap_policy() -> dict:
+    """Load the executable gap policy, falling back to the deny-by-default default."""
+
+    try:
+        return load_gap_policy(_SHARED_ROOT / GAP_POLICY_JSON)
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+        return load_gap_policy(None)
 
 
 def issue(code: str, message: str, path: str = "FORM-READY.json") -> dict[str, str]:
@@ -217,6 +227,7 @@ def assess_form_ready(root: str | Path) -> dict[str, Any]:
     root_path = Path(root)
     errors: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
+    unresolved_counts = {"scores": 0, "adjudications": 0, "human_checks": 0, "material_gaps": 0}
     manifest: dict[str, Any] = {}
     try:
         _walk_safe_files(root_path)
@@ -317,9 +328,22 @@ def assess_form_ready(root: str | Path) -> dict[str, Any]:
                             _add_identity_error(errors, "FORM-READY.json#/base", f"Base identity mismatch: {mismatches}")
                         _check_present_record_identities(root_path, manifest, context, errors)
                         try:
-                            validate_observation_provenance(root_path, manifest, context, errors)
+                            observations = validate_observation_provenance(root_path, manifest, context, errors)
+                            decisions_path = root_path.joinpath(*PurePosixPath(paths.get("final_decisions")).parts) if _safe_relative(paths.get("final_decisions")) else None
+                            if decisions_path is not None:
+                                audit_path = root_path.joinpath(*PurePosixPath(paths.get("adjudication_audit")).parts) if _safe_relative(paths.get("adjudication_audit")) else None
+                                outcome = validate_final_decisions(
+                                    context,
+                                    observations,
+                                    observations,
+                                    decisions_path,
+                                    audit_path=audit_path,
+                                    gap_policy=_gap_policy(),
+                                )
+                                errors.extend(outcome["errors"])
+                                unresolved_counts.update(outcome["unresolved"])
                         except (OSError, UnicodeError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
-                            errors.append(issue("OBSERVATION_VALIDATION_FAILED", str(exc), "observations"))
+                            errors.append(issue("RECORD_VALIDATION_FAILED", str(exc), "observations"))
             except (OSError, UnicodeError, ValueError, KeyError, TypeError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
                 errors.append(issue("BASE_INTEGRITY_FAILED", str(exc), str(archive_relative)))
     derived = "ready_for_form" if not errors else "incomplete"
@@ -327,6 +351,7 @@ def assess_form_ready(root: str | Path) -> dict[str, Any]:
         "validator_version": SCHEMA_VERSION,
         "result": "pass" if not errors else "fail",
         "derived_status": derived,
+        "unresolved": dict(unresolved_counts),
         "errors": errors,
         "warnings": warnings,
     }
