@@ -1,0 +1,25 @@
+{
+  "warning": "FICTIONAL EXAMPLE. Every id, score, path, and reason below is invented and must never be copied into a real package.",
+  "schema_version": "2.0.0",
+  "outer_package_id": "00000000-0000-4000-8000-000000000000",
+  "base_package_id": "example-package-id",
+  "base_zip_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "source_input_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "task_id": "example-task",
+  "records": [
+    {
+      "model_id": "example-model",
+      "rubric_id": "R1-01",
+      "round": 1,
+      "criterion_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "score": 1,
+      "decided_by": "mechanical",
+      "reason": "Static evidence supports the criterion; this text is fictional.",
+      "evidence_ids": [
+        "EV-example-model-R1-01-001"
+      ],
+      "decider": "example-worker",
+      "decided_at": "2026-01-01T00:00:00+08:00"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "schema_version": "2.0.0",
+  "known_optional": {},
+  "required": [],
+  "semantic": [],
+  "unknown_policy": "remote_human_with_limitation",
+  "notes": "Executable allowlist. Optionality is never inferred from free text."
+}

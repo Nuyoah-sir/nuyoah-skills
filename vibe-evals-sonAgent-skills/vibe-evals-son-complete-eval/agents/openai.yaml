@@ -1,0 +1,4 @@
+interface:
+  display_name: "Vibe Evals Remote Complete Eval"
+  short_description: "Complete an entire remote evaluation and seal one form-ready bundle"
+  default_prompt: "Use $vibe-evals-son-complete-eval to run the whole remote evaluation and hand back one sealed form-ready bundle."

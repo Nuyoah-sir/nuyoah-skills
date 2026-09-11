@@ -8,7 +8,35 @@ import json
 import sys
 from pathlib import Path
 
+from artifact_integrity import _walk_safe_files, sha256_file
 from discover_task_package import discover_task_package
+
+
+def verify_frozen_source(task_root: str | Path, freeze: dict) -> dict:
+    """Compare the live task root against the frozen inventory, byte for byte.
+
+    The freeze is the inventory the exporting machine recorded; a form-ready
+    package may only be sealed while the live source still matches it exactly,
+    including files that appeared or disappeared afterwards.
+    """
+
+    root = Path(task_root)
+    rows = freeze.get("source_inventory") if isinstance(freeze, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("SOURCE_FREEZE_INVALID: source_inventory must be a list")
+    before = {row["path"]: row["sha256"] for row in rows if isinstance(row, dict) and isinstance(row.get("path"), str)}
+    if len(before) != len(rows):
+        raise ValueError("SOURCE_FREEZE_INVALID: every inventory row needs a path and digest")
+    try:
+        after = {file.relative_to(root).as_posix(): sha256_file(file) for file in _walk_safe_files(root)}
+    except (OSError, ValueError) as exc:
+        return {"status": "source_unreadable", "detail": str(exc)}
+    added = sorted(set(after) - set(before))
+    removed = sorted(set(before) - set(after))
+    changed = sorted(path for path in set(before) & set(after) if before[path] != after[path])
+    if added or removed or changed:
+        return {"status": "source_changed", "added": added, "removed": removed, "changed": changed}
+    return {"status": "unchanged", "input_digest": freeze.get("input_digest"), "files": len(before)}
 
 
 def main(argv=None) -> int:

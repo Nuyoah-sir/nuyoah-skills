@@ -140,11 +140,34 @@ def _load(bundle: Path, decisions_path: Path, scored_dir: Path, input_path: Path
         unknown = {value for values in labels.values() for value in values} - allowed_labels
         if unknown:
             raise ValueError(f"Unknown V2.1 labels for {model_id}: {sorted(unknown)}")
-    return manifest, data, model_map, rubric_ids, totals
+    return manifest, data, model_map, rubric_ids, totals, evidence_meta_by_model
 
 
-def _build(bundle: Path, decisions_path: Path, scored_dir: Path, input_path: Path, label_library: Path) -> tuple[str, dict]:
-    manifest, data, model_map, rubric_ids, totals = _load(bundle, decisions_path, scored_dir, input_path, label_library)
+def build_form_from_context(
+    manifest: dict,
+    form_data: dict,
+    model_map: dict,
+    rubric_ids: list[str],
+    totals: dict[str, int],
+    evidence_meta_by_model: dict[str, dict[str, dict]],
+    label_library: Path,
+) -> tuple[str, dict]:
+    """Assemble the V2.1 form from already validated inputs.
+
+    This is the only ordering and Markdown implementation: the v1 adapter and the
+    v2 form-ready adapter both call it, so the two paths can never drift apart.
+    """
+
+    data = form_data
+    for model_id, item in data["models"].items():
+        if model_id not in model_map or model_id not in totals:
+            raise ValueError(f"{model_id} is not a scored model of this package")
+        known = evidence_meta_by_model.get(model_id, {})
+        refs = item["evidence_refs"]
+        referenced = {ref for values in [refs["overall"], refs["style"], *refs["pros"], *refs["cons"], *refs["dimensions"].values()] for ref in values}
+        unknown = sorted(ref for ref in referenced if ref not in known)
+        if unknown:
+            raise ValueError(f"{model_id} cites evidence that is not in the verified registry: {unknown}")
     overall = {model_id: float(data["models"][model_id]["overall_impression"]) for model_id in model_map}
     insertion = {model_id: index for index, model_id in enumerate(model_map)}
     order = sorted(model_map, key=lambda model_id: (-overall[model_id], -totals[model_id], insertion[model_id]))
@@ -194,6 +217,11 @@ def _build(bundle: Path, decisions_path: Path, scored_dir: Path, input_path: Pat
         lines.append(f"- 风格指纹：{'、'.join(labels['style']) or '无'}")
     lines.append("")
     return "\n".join(lines), {"order": order, "ranks": ranks, "totals": totals, "label_library_sha256": label_digest}
+
+
+def _build(bundle: Path, decisions_path: Path, scored_dir: Path, input_path: Path, label_library: Path) -> tuple[str, dict]:
+    manifest, data, model_map, rubric_ids, totals, evidence_meta_by_model = _load(bundle, decisions_path, scored_dir, input_path, label_library)
+    return build_form_from_context(manifest, data, model_map, rubric_ids, totals, evidence_meta_by_model, label_library)
 
 
 def render_v21_form(bundle_dir, decisions_path, scored_dir, input_path, output_path, label_library=None) -> dict:

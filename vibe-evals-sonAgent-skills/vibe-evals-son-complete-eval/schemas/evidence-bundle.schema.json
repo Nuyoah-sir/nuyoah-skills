@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.invalid/vibe-evals/evidence-bundle-manifest-v1.schema.json",
+  "title": "Vibe Evals Evidence Bundle v1 MANIFEST.json",
+  "description": "Strict schema for MANIFEST.json. Folder-wide referential, hash, coverage, and seal checks are performed by validate_bundle.py.",
+  "type": "object",
+  "required": ["schema", "schema_version", "package_id", "task", "generator", "source_input_digest", "inputs", "models", "package_status", "missing_materials", "warnings"],
+  "properties": {
+    "schema": {"const": "vibe-evals-evidence-bundle"},
+    "schema_version": {"const": "1.0.0"},
+    "package_id": {"$ref": "#/$defs/nonEmptyString"},
+    "parent_package_id": {"$ref": "#/$defs/nonEmptyString"},
+    "applied_deltas": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/nonEmptyString"}},
+    "task": {"$ref": "#/$defs/task"},
+    "generator": {"$ref": "#/$defs/generator"},
+    "policies": {"$ref": "#/$defs/policies"},
+    "source_input_digest": {"$ref": "#/$defs/sha256"},
+    "inputs": {"$ref": "#/$defs/inputs"},
+    "models": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/model"}},
+    "package_status": {"enum": ["incomplete", "ready_for_local_review", "ready_for_form"]},
+    "missing_materials": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "warnings": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {"type": "string", "minLength": 1},
+          {
+            "type": "object",
+            "required": ["code", "message"],
+            "properties": {
+              "code": {"$ref": "#/$defs/nonEmptyString"},
+              "message": {"$ref": "#/$defs/nonEmptyString"},
+              "path": {"$ref": "#/$defs/relativePath"}
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "nonEmptyString": {"type": "string", "minLength": 1},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "relativePath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"},
+    "task": {
+      "type": "object",
+      "required": ["name", "batch_id", "round_count"],
+      "properties": {
+        "name": {"$ref": "#/$defs/nonEmptyString"},
+        "batch_id": {"$ref": "#/$defs/nonEmptyString"},
+        "round_count": {"type": "integer", "minimum": 1},
+        "task_type": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "additionalProperties": false
+    },
+    "generator": {
+      "type": "object",
+      "required": ["agent", "skill_version"],
+      "properties": {
+        "agent": {"$ref": "#/$defs/nonEmptyString"},
+        "model": {"$ref": "#/$defs/nonEmptyString"},
+        "skill": {"$ref": "#/$defs/nonEmptyString"},
+        "skill_version": {"$ref": "#/$defs/nonEmptyString"},
+        "generated_at": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "policies": {
+      "type": "object",
+      "properties": {
+        "round_evidence_isolation": {"type": "boolean"},
+        "unknown_is_not_zero": {"type": "boolean"},
+        "dynamic_execution_requires_full_isolation": {"type": "boolean"},
+        "remote_adjudication_must_remain_pending": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "inputs": {
+      "type": "object",
+      "required": ["prompt", "rubrics"],
+      "properties": {
+        "prompt": {"$ref": "#/$defs/relativePath"},
+        "rubrics": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/rubricFile"}},
+        "record_txt": {"oneOf": [{"$ref": "#/$defs/relativePath"}, {"type": "null"}]}
+      },
+      "additionalProperties": false
+    },
+    "rubricFile": {
+      "type": "object",
+      "required": ["round", "path", "count", "sha256"],
+      "properties": {
+        "round": {"type": "integer", "minimum": 1},
+        "path": {"$ref": "#/$defs/relativePath"},
+        "count": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": false
+    },
+    "model": {
+      "type": "object",
+      "required": ["model_id", "display_name", "directory", "output_status"],
+      "properties": {
+        "model_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+        "display_name": {"$ref": "#/$defs/nonEmptyString"},
+        "directory": {"$ref": "#/$defs/relativePath"},
+        "output_status": {"enum": ["present", "missing", "fallback_zero"]}
+      },
+      "additionalProperties": false
+    }
+  }
+}

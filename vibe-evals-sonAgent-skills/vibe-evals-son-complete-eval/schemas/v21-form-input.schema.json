@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Vibe Evals deterministic V2.1 form input v1",
+  "type": "object",
+  "required": ["schema_version", "base_package_id", "task", "models"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "base_package_id": {"type": "string", "minLength": 1},
+    "task": {
+      "type": "object",
+      "required": ["ranking_reason", "maximum_difference", "capability_boundary", "difficulty_and_approach", "evidence_refs"],
+      "properties": {
+        "ranking_reason": {"type": "string", "minLength": 1},
+        "maximum_difference": {"type": "string", "minLength": 1},
+        "capability_boundary": {"type": "string", "minLength": 1},
+        "difficulty_and_approach": {"type": "string", "minLength": 1},
+        "evidence_refs": {
+          "type": "object",
+          "required": ["ranking_reason", "maximum_difference", "capability_boundary", "difficulty_and_approach"],
+          "properties": {
+            "ranking_reason": {"$ref": "#/$defs/nonEmptyEvidenceIds"},
+            "maximum_difference": {"$ref": "#/$defs/nonEmptyEvidenceIds"},
+            "capability_boundary": {"$ref": "#/$defs/nonEmptyEvidenceIds"},
+            "difficulty_and_approach": {"$ref": "#/$defs/nonEmptyEvidenceIds"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "models": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/model"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "score": {"type": "number", "minimum": 0, "maximum": 4, "multipleOf": 0.5},
+    "evidenceIds": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "nonEmptyEvidenceIds": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "dimension": {
+      "type": "object",
+      "required": ["basis"],
+      "properties": {"applicable": {"type": "boolean"}, "score": {"$ref": "#/$defs/score"}, "basis": {"type": "string", "minLength": 1}},
+      "additionalProperties": false
+    },
+    "labels": {
+      "type": "object",
+      "required": ["pros", "cons", "style"],
+      "properties": {
+        "pros": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "cons": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "style": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      },
+      "additionalProperties": false
+    },
+    "model": {
+      "type": "object",
+      "required": ["overall_impression", "dimensions", "pros", "cons", "style", "evidence_refs", "labels"],
+      "properties": {
+        "overall_impression": {"$ref": "#/$defs/score"},
+        "dimensions": {
+          "type": "object",
+          "required": ["G1", "G2", "G3", "S1", "A1", "R1"],
+          "properties": {"G1": {"$ref": "#/$defs/dimension"}, "G2": {"$ref": "#/$defs/dimension"}, "G3": {"$ref": "#/$defs/dimension"}, "S1": {"$ref": "#/$defs/dimension"}, "A1": {"$ref": "#/$defs/dimension"}, "R1": {"$ref": "#/$defs/dimension"}},
+          "additionalProperties": false
+        },
+        "pros": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string", "minLength": 1}},
+        "cons": {"type": "array", "maxItems": 5, "items": {"type": "string", "minLength": 1}},
+        "style": {"type": "string", "minLength": 1},
+        "evidence_refs": {
+          "type": "object",
+          "required": ["overall", "dimensions", "pros", "cons", "style"],
+          "properties": {
+            "overall": {"$ref": "#/$defs/evidenceIds"},
+            "dimensions": {"type": "object", "required": ["G1", "G2", "G3", "S1", "A1", "R1"], "properties": {"G1": {"$ref": "#/$defs/evidenceIds"}, "G2": {"$ref": "#/$defs/evidenceIds"}, "G3": {"$ref": "#/$defs/evidenceIds"}, "S1": {"$ref": "#/$defs/evidenceIds"}, "A1": {"$ref": "#/$defs/evidenceIds"}, "R1": {"$ref": "#/$defs/evidenceIds"}}, "additionalProperties": false},
+            "pros": {"type": "array", "items": {"$ref": "#/$defs/evidenceIds"}},
+            "cons": {"type": "array", "items": {"$ref": "#/$defs/evidenceIds"}},
+            "style": {"$ref": "#/$defs/evidenceIds"}
+          },
+          "additionalProperties": false
+        },
+        "labels": {"$ref": "#/$defs/labels"}
+      },
+      "additionalProperties": false
+    }
+  }
+}
