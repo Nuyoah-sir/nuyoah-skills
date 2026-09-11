@@ -11,6 +11,13 @@ from presentation_workspace import (
     DIMENSIONS, MODEL_SLOTS, TASK_SLOTS, initialize_presentation, record_attestation,
     record_slot, slot_ids, validate_presentation,
 )
+from project_form_ready_scores import project_scores
+from render_supporting_outputs import (
+    FORM_INPUT, HEATMAP, REPORT_INPUT, REPORT_MD, render_supporting_outputs,
+    verify_supporting_outputs,
+)
+from form_ready_context import load_base_context, load_observation_registry
+from validate_final_decisions import validate_final_decisions
 from v21_labels import LABEL_SECTIONS, LABEL_SOURCE, allowed_labels, build_label_document, load_label_document
 from tests.v2_fixtures import make_form_ready_workspace
 
@@ -145,6 +152,118 @@ class PresentationWorkspaceTests(unittest.TestCase):
         document["slots"]["model.model-a.pros"]["value"] = ["swapped in later"]
         path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         self.assertIn("PRESENTATION_PROPOSAL_DRIFT", {row["code"] for row in validate_presentation(self.form, ROOT / "shared")["errors"]})
+
+
+class SupportingOutputTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.fixture = make_form_ready_workspace(self.root / "fixture", complete=True)
+        self.form = self.fixture.outer
+        self.base = load_base_context(self.fixture.sealed_inner_zip.parents[2] / "inspected-inner")
+
+    def _closed(self):
+        manifest = json.loads((self.form / "FORM-READY.json").read_text(encoding="utf-8"))
+        observations = load_observation_registry(self.form, manifest)
+        outcome = validate_final_decisions(
+            self.base, observations, observations, self.form / "decisions/final-decisions.json",
+            audit_path=self.form / "decisions/adjudication-audit.json",
+        )
+        return outcome["registry"]
+
+    def _present(self):
+        if not (self.form / "presentation/presentation-input.json").exists():
+            initialize_presentation(self.form)
+        legal = sorted(allowed_labels(ROOT / "shared")["Pros"])
+        for name in TASK_SLOTS:
+            record_slot(self.form, f"task.{name}", {"value": f"observation for {name}", "basis": "basis",
+                "evidence_ids": [EV_ID], "recorder": "remote-agent-01", "recorded_at": "2026-09-10T10:00:00+08:00"})
+        for name in DIMENSIONS:
+            value = {"applicable": False, "basis": f"{NOT_APPLICABLE}: not applicable here"} if name in {"S1", "A1", "R1"} else {"applicable": True, "score": 3.0, "basis": "observable"}
+            record_slot(self.form, f"model.model-a.{name}", {"value": value, "basis": "basis",
+                "evidence_ids": [EV_ID], "recorder": "remote-agent-01", "recorded_at": "2026-09-10T10:00:00+08:00"})
+        body = lambda value: {"value": value, "basis": "basis", "evidence_ids": [EV_ID],
+                              "recorder": "remote-agent-01", "recorded_at": "2026-09-10T10:00:00+08:00"}
+        record_slot(self.form, "model.model-a.overall_impression", body(3.0))
+        record_slot(self.form, "model.model-a.pros", body(["pro one", "pro two"]))
+        record_slot(self.form, "model.model-a.cons", body(["con one"]))
+        record_slot(self.form, "model.model-a.style", body("distinctive behaviour"))
+        record_slot(self.form, "model.model-a.labels.pros", body(legal[:2]))
+        record_slot(self.form, "model.model-a.labels.cons", body(sorted(allowed_labels(ROOT / "shared")["Cons"])[:1]))
+        record_slot(self.form, "model.model-a.labels.style", body(sorted(allowed_labels(ROOT / "shared")["Stylistic Fingerprints"])[:1]))
+        for name in ("overall_impression", "G3", "style", "labels.pros", "labels.cons", "labels.style"):
+            record_attestation(self.form, f"model.model-a.{name}", observer="operator-01", confirmation_text="confirmed")
+
+    def test_render_requires_a_complete_presentation_and_closed_decisions(self):
+        initialize_presentation(self.form)
+        with self.assertRaisesRegex(ValueError, "SUPPORTING_OUTPUTS_REQUIRE_COMPLETE_PRESENTATION"):
+            render_supporting_outputs(self.form, ROOT / "shared")
+        self._present()
+        project_scores(self.base, self._closed(), self.form)
+        result = render_supporting_outputs(self.form, ROOT / "shared")
+        for key, relative in (("report_input", REPORT_INPUT), ("report", REPORT_MD), ("heatmap", HEATMAP), ("form_input", FORM_INPUT)):
+            self.assertTrue(Path(result[key]).is_file(), key)
+            self.assertEqual(relative, Path(result[key]).relative_to(self.form).as_posix())
+        with self.assertRaises(FileExistsError):
+            render_supporting_outputs(self.form, ROOT / "shared")
+
+    def test_form_input_binds_the_package_digests(self):
+        self._present()
+        project_scores(self.base, self._closed(), self.form)
+        render_supporting_outputs(self.form, ROOT / "shared")
+        form_input = json.loads((self.form / FORM_INPUT).read_text(encoding="utf-8"))
+        digest = lambda relative: __import__("hashlib").sha256((self.form / relative).read_bytes()).hexdigest()
+        self.assertEqual(digest("presentation/presentation-input.json"), form_input["presentation_input_sha256"])
+        self.assertEqual(digest("decisions/final-decisions.json"), form_input["final_decisions_sha256"])
+        self.assertEqual({"model-a": digest("scored/rubrics-model-a.json")}, form_input["scored_sha256"])
+        self.assertEqual(self.fixture.inner_package_id, form_input["base_package_id"])
+
+    def test_verify_replays_byte_identically_and_detects_a_score_change(self):
+        self._present()
+        project_scores(self.base, self._closed(), self.form)
+        render_supporting_outputs(self.form, ROOT / "shared")
+        self.assertEqual({"verified": sorted([REPORT_INPUT, REPORT_MD, HEATMAP, FORM_INPUT])},
+                         verify_supporting_outputs(self.form, ROOT / "shared"))
+
+        path = self.form / "scored/rubrics-model-a.json"
+        rows = json.loads(path.read_text(encoding="utf-8"))
+        rows[0]["score"] = 0 if rows[0]["score"] == 1 else 1
+        path.write_text(json.dumps(rows, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            verify_supporting_outputs(self.form, ROOT / "shared")
+
+    def test_two_exchanged_scores_keep_totals_but_change_the_rendered_artifacts(self):
+        from render_supporting_outputs import _heatmap_html
+
+        def report(first: float, second: float) -> dict:
+            return {
+                "schema_version": "2.0.0", "outer_package_id": "o", "base_package_id": "b",
+                "base_zip_sha256": "a" * 64, "source_input_digest": "c" * 64, "task_id": "t",
+                "task": {name: "text" for name in TASK_SLOTS},
+                "models": {
+                    "model-a": {"overall_impression": 3.0, "dimensions": {}, "pros": ["p1", "p2"],
+                                "cons": [], "style": "s", "labels": {}, "rubrics": [
+                                    {"rubric_id": "R1-01", "round": 1, "criterion": "c1", "score": first, "reason": "r1",
+                                     "decided_by": "mechanical", "evidence_ids": ["EV-1"]},
+                                    {"rubric_id": "R1-02", "round": 1, "criterion": "c2", "score": second, "reason": "r2",
+                                     "decided_by": "mechanical", "evidence_ids": ["EV-2"]}]},
+                    "model-b": {"overall_impression": 3.0, "dimensions": {}, "pros": ["p1", "p2"],
+                                "cons": [], "style": "s", "labels": {}, "rubrics": [
+                                    {"rubric_id": "R1-01", "round": 1, "criterion": "c1", "score": second, "reason": "r1",
+                                     "decided_by": "mechanical", "evidence_ids": ["EV-1"]},
+                                    {"rubric_id": "R1-02", "round": 1, "criterion": "c2", "score": first, "reason": "r2",
+                                     "decided_by": "mechanical", "evidence_ids": ["EV-2"]}]},
+                },
+            }
+
+        original = report(1, 0)
+        exchanged = report(0, 1)
+        totals = lambda value: {model_id: sum(row["score"] for row in value["models"][model_id]["rubrics"]) for model_id in value["models"]}
+        self.assertEqual(totals(original), totals(exchanged), "the swap must preserve every total")
+        self.assertNotEqual(_heatmap_html(original), _heatmap_html(exchanged))
+        self.assertIn('<td class="score-1">1</td>', _heatmap_html(original))
+        self.assertIn('<td class="score-0">0</td>', _heatmap_html(exchanged))
 
 
 if __name__ == "__main__":
