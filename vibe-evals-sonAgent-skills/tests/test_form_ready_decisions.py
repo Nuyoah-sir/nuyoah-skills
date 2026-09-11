@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT / "shared" / "scripts"))
 from form_ready_context import BaseContext, ObservationRegistry
 from form_ready_context import load_base_context, load_observation_registry
 from project_form_ready_scores import project_scores, read_scored_summary, verify_projected_scores
+from decision_workspace import finalize_audit, initialize_workspace, record_closure, record_pair
 from record_observation import sha256_text
 from validate_final_decisions import accepted_actor_values, load_gap_policy, validate_final_decisions
 from validate_form_ready import validate_form_ready
@@ -155,11 +156,19 @@ class FormReadyDecisionTests(unittest.TestCase):
         self.assertEqual(1, report["unresolved"]["adjudications"])
 
         write_json(outer / AUDIT, {"schema_version": "2.0.0", "records": [{
-            "adjudication_id": "ADJ-001", "resolution": 1, "affected_pairs": [["model-a", "R1-01"]],
+            "adjudication_id": "ADJ-001", "status": "resolved", "final_policy": "按真实行为判定。",
+            "decided_by": "remote_human", "decider": "operator-01", "decided_at": "2026-09-10T10:00:00+08:00",
+            "affected_pairs": [["model-a", "R1-01"]], "per_model_final_scores": {"model-a": {"R1-01": 1}},
         }]})
         codes, report = self._codes(outer)
         self.assertNotIn("DECISION_UNRESOLVED_ADJUDICATION", codes)
         self.assertEqual(0, report["unresolved"]["adjudications"])
+
+        document = json.loads((outer / AUDIT).read_text(encoding="utf-8"))
+        document["records"][0]["decided_by"] = "mechanical"
+        write_json(outer / AUDIT, document)
+        codes, report = self._codes(outer)
+        self.assertIn("DECISION_UNRESOLVED_ADJUDICATION", codes)
 
     def test_gap_policy_is_executable_and_never_inferred_from_prose(self):
         policy = {
@@ -332,6 +341,100 @@ class FormReadyDecisionTests(unittest.TestCase):
             "evidence_ids": [EV_ID], "decider": "fixture", "decided_at": "2026-09-10T10:00:00+08:00",
         }]})
         return context, observations, decisions_path, decisions_path.parent / "adjudication-audit.json"
+
+
+def _add_pending_adjudication(bundle: Path) -> None:
+    path = bundle / "models" / "model-a" / "rubric-evidence.jsonl"
+    row = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    row["adjudication_ids"] = ["ADJ-001"]
+    path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+    write_json(bundle / "review" / "pending-adjudications.json", {"items": [{
+        "adjudication_id": "ADJ-001", "status": "pending", "rubric_ids": ["R1-01"],
+        "question": "按行为还是代码判？", "ambiguity": "两种验收解释都可能成立。",
+        "evidence_ids": [], "applies_to_all_models": True,
+        "recommended_policy": "按真实行为。", "alternative_policy": "按静态代码。",
+        "impact": "影响 R1-01。", "resolution": None,
+    }]})
+    manifest_path = bundle / "MANIFEST.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["package_status"] = "ready_for_local_review"
+    write_json(manifest_path, manifest)
+
+
+class DecisionWorkspaceTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def _workspace(self, *, adjudicated=False):
+        fixture = make_form_ready_workspace(
+            self.root / f"ws-{len(list(self.root.iterdir()))}", complete=True,
+            mutate_bundle=_add_pending_adjudication if adjudicated else None,
+        )
+        (fixture.outer / DECISIONS).unlink()
+        (fixture.outer / AUDIT).unlink()
+        return fixture
+
+    def test_initialize_creates_exactly_one_slot_per_pair_and_refuses_a_second_run(self):
+        fixture = self._workspace()
+        result = initialize_workspace(fixture.outer)
+        self.assertEqual(1, result["pairs"])
+        self.assertEqual(0, result["closures"])
+        document = json.loads((fixture.outer / DECISIONS).read_text(encoding="utf-8"))
+        self.assertEqual([("model-a", "R1-01")], [(row["model_id"], row["rubric_id"]) for row in document["records"]])
+        self.assertIsNone(document["records"][0]["score"])
+        with self.assertRaises(FileExistsError):
+            initialize_workspace(fixture.outer)
+
+    def test_record_pair_rejects_an_unfilled_or_wrong_actor_slot(self):
+        fixture = self._workspace()
+        initialize_workspace(fixture.outer)
+        with self.assertRaisesRegex(ValueError, "DECISION_POLICY_REJECTED"):
+            record_pair(fixture.outer, "model-a", "R1-01", {"score": 1, "decided_by": "mechanical",
+                "evidence_ids": [EV_ID], "decider": "fixture", "decided_at": "2026-09-10T10:00:00+08:00"})
+        good = record_pair(fixture.outer, "model-a", "R1-01", {"score": 1, "decided_by": "mechanical",
+            "reason": "静态证据支持。", "evidence_ids": [EV_ID], "decider": "fixture",
+            "decided_at": "2026-09-10T10:00:00+08:00"})
+        self.assertEqual(1, good["score"])
+        self.assertTrue(good["reason"])
+        with self.assertRaisesRegex(ValueError, "DECISION_SLOT_MISSING"):
+            record_pair(fixture.outer, "model-b", "R1-01", {"score": 1})
+
+    def test_record_pair_refuses_a_score_the_evidence_does_not_support(self):
+        fixture = self._workspace()
+        initialize_workspace(fixture.outer)
+        with self.assertRaisesRegex(ValueError, "DECISION_POLICY_REJECTED"):
+            record_pair(fixture.outer, "model-a", "R1-01", {"score": 0, "decided_by": "mechanical",
+                "reason": "强行给 0。", "evidence_ids": [EV_ID], "decider": "fixture",
+                "decided_at": "2026-09-10T10:00:00+08:00"})
+
+    def test_adjudication_and_gap_closures_are_slot_bound_and_canonical(self):
+        fixture = self._workspace(adjudicated=True)
+        initialize_workspace(fixture.outer)
+        audit = json.loads((fixture.outer / AUDIT).read_text(encoding="utf-8"))
+        self.assertEqual([("ADJ-001", [["model-a", "R1-01"]])], [(row["adjudication_id"], row["affected_pairs"]) for row in audit["records"]])
+
+        with self.assertRaisesRegex(ValueError, "CLOSURE_POLICY_REJECTED"):
+            record_closure(fixture.outer, adjudication_id="ADJ-001", value={
+                "final_policy": "自己说了算。", "decided_by": "mechanical", "decider": "fixture",
+                "decided_at": "2026-09-10T10:00:00+08:00", "per_model_final_scores": {"model-a": {"R1-01": 1}},
+            })
+        closed = record_closure(fixture.outer, adjudication_id="ADJ-001", value={
+            "final_policy": "按真实行为判定。", "decided_by": "remote_human", "decider": "operator-01",
+            "decided_at": "2026-09-10T10:00:00+08:00", "per_model_final_scores": {"model-a": {"R1-01": 1}},
+        })
+        self.assertEqual("resolved", closed["status"])
+        with self.assertRaisesRegex(ValueError, "CLOSURE_SLOT_MISSING"):
+            record_closure(fixture.outer, adjudication_id="ADJ-404", value={"final_policy": "x"})
+
+        first = (fixture.outer / AUDIT).read_bytes()
+        finalize_audit(fixture.outer)
+        second = (fixture.outer / AUDIT).read_bytes()
+        finalize_audit(fixture.outer)
+        self.assertEqual(second, (fixture.outer / AUDIT).read_bytes())
+        self.assertNotEqual(first, second)
+        self.assertTrue(json.loads(second.decode("utf-8"))["records"][0]["policy_digest"])
 
 
 if __name__ == "__main__":

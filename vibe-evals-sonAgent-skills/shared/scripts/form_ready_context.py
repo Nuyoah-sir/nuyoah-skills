@@ -4,9 +4,13 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from artifact_integrity import safe_extract_zip, verify_sidecar
+from validate_bundle import validate_bundle
 
 
 @dataclass(frozen=True)
@@ -156,4 +160,29 @@ def load_observation_registry(root: str | Path, manifest: dict[str, Any]) -> Obs
     )
 
 
-__all__ = ["BaseContext", "ObservationRegistry", "load_base_context", "load_observation_registry"]
+def load_form_ready_base(root: str | Path) -> tuple[dict[str, Any], BaseContext, dict[str, Any]]:
+    """Verify the sealed inner package and return its manifest, context, and freeze.
+
+    This is the single entry point every outer-phase module must use before it
+    trusts anything about the base package.
+    """
+
+    root_path = Path(root)
+    manifest = _read_json(root_path / "FORM-READY.json")
+    archive = root_path / "base" / "evidence-bundle.zip"
+    sidecar = root_path / "base" / "evidence-bundle.zip.sha256"
+    verify_sidecar(archive, sidecar, manifest.get("base", {}).get("sha256"))
+    with tempfile.TemporaryDirectory(prefix="vibe-form-ready-base-") as temporary:
+        extracted = safe_extract_zip(archive, Path(temporary) / "bundle")
+        report = validate_bundle(extracted, require_seal=True)
+        if report.get("result") != "pass":
+            raise ValueError("BASE_VALIDATION_FAILED")
+        context = load_base_context(extracted)
+        freeze = _read_json(extracted / "source-freeze.json")
+    return manifest, context, freeze
+
+
+__all__ = [
+    "BaseContext", "ObservationRegistry", "load_base_context", "load_form_ready_base",
+    "load_observation_registry",
+]

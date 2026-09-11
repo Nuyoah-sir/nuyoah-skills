@@ -185,6 +185,37 @@ def _audit_closure(decisions_path: Path, audit_path: Path | None) -> tuple[dict[
     return adjudications, gaps
 
 
+def _adjudication_closed(
+    closure: Any,
+    affected: list[tuple[str, str]],
+    registry: dict[tuple[str, str], dict[str, Any]],
+) -> bool:
+    """A pending adjudication closes only through one remote-human policy resolution."""
+
+    if not isinstance(closure, dict):
+        return False
+    if closure.get("decided_by") != REMOTE_HUMAN_ACTOR:
+        return False
+    if not isinstance(closure.get("final_policy"), str) or not closure["final_policy"].strip():
+        return False
+    if not isinstance(closure.get("decider"), str) or not closure["decider"].strip():
+        return False
+    if parse_timestamp(closure.get("decided_at")) is None:
+        return False
+    if {tuple(pair) for pair in closure.get("affected_pairs") or []} != set(affected):
+        return False
+    scores = closure.get("per_model_final_scores")
+    if not isinstance(scores, dict):
+        return False
+    for model_id, rubric_id in affected:
+        model_scores = scores.get(model_id)
+        value = model_scores.get(rubric_id) if isinstance(model_scores, dict) else None
+        decision = registry.get((model_id, rubric_id))
+        if value not in (0, 1) or isinstance(value, bool) or not isinstance(decision, dict) or decision.get("score") != value:
+            return False
+    return True
+
+
 def _check_cited_evidence(
     decision: dict[str, Any],
     *,
@@ -345,8 +376,7 @@ def validate_final_decisions(
             if adj_id in (base_ctx.evidence.get((model_id, rubric_id)) or {}).get("adjudication_ids", [])
         ]
         closure = adjudication_closures.get(adj_id)
-        resolved_pairs = {tuple(pair) for pair in (closure or {}).get("affected_pairs", [])} if isinstance((closure or {}).get("affected_pairs"), list) else set()
-        if (closure or {}).get("resolution") not in (0, 1) or resolved_pairs != set(affected):
+        if not _adjudication_closed(closure, affected, registry):
             unresolved_adjudications += 1
 
     unresolved_gaps = 0

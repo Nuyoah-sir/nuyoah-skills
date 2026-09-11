@@ -14,8 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from artifact_integrity import _safe_posix_path, _walk_safe_files, sha256_file, verify_sidecar
-from artifact_integrity import safe_extract_zip
-from form_ready_context import load_base_context
+from form_ready_context import load_form_ready_base
 from validate_bundle import source_inventory_digest, validate_bundle
 
 MAX_IMAGE_BYTES = 64 * 1024 * 1024
@@ -96,18 +95,7 @@ def _load_index(root: Path) -> tuple[Path, dict[str, Any]]:
 
 
 def _base_identity(root: Path) -> tuple[dict[str, Any], Any, dict[str, Any]]:
-    manifest = json.loads((root / "FORM-READY.json").read_text(encoding="utf-8"))
-    archive = root / "base/evidence-bundle.zip"
-    sidecar = root / "base/evidence-bundle.zip.sha256"
-    verify_sidecar(archive, sidecar, manifest.get("base", {}).get("sha256"))
-    with tempfile.TemporaryDirectory(prefix="vibe-media-base-") as temporary:
-        extracted = safe_extract_zip(archive, Path(temporary) / "bundle")
-        report = validate_bundle(extracted, require_seal=True)
-        if report.get("result") != "pass":
-            raise ValueError("BASE_VALIDATION_FAILED")
-        context = load_base_context(extracted)
-        source_freeze = json.loads((extracted / "source-freeze.json").read_text(encoding="utf-8"))
-    return manifest, context, source_freeze
+    return load_form_ready_base(root)
 
 
 def _normalize_bindings(root: Path, bindings: Any, *, render_scopes: bool) -> list[dict[str, Any]]:
