@@ -10,7 +10,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from artifact_integrity import safe_extract_zip, sha256_file, write_checksum_manifest
+from artifact_integrity import _walk_safe_files, safe_extract_zip, sha256_file, write_checksum_manifest
 from validate_bundle import validate_bundle
 
 GENERATED_EXCLUDES = {"READY.json", "integrity/files.sha256", "integrity/validation-report.json"}
@@ -24,7 +24,8 @@ def _write_checksums(root: Path) -> None:
 
 
 def package_bundle(bundle_dir: str | Path, output_zip: str | Path) -> dict:
-    root = Path(bundle_dir).resolve()
+    supplied_root = Path(bundle_dir)
+    root = supplied_root.resolve()
     output = Path(output_zip).resolve()
     partial = output.with_suffix(output.suffix + ".partial")
     try:
@@ -35,9 +36,7 @@ def package_bundle(bundle_dir: str | Path, output_zip: str | Path) -> dict:
             raise
     if output.exists() or output.with_suffix(output.suffix + ".sha256").exists() or partial.exists():
         raise FileExistsError(f"Output already exists: {output}")
-    symlinks = [path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_symlink()]
-    if symlinks:
-        raise ValueError(f"Bundle contains symbolic links: {symlinks}")
+    _walk_safe_files(supplied_root)
     report = validate_bundle(root, require_seal=False)
     if report["result"] == "fail":
         raise ValueError(json.dumps(report, ensure_ascii=False))
@@ -47,8 +46,9 @@ def package_bundle(bundle_dir: str | Path, output_zip: str | Path) -> dict:
     _write_checksums(root)
 
     output.parent.mkdir(parents=True, exist_ok=True)
+    packaged_files = _walk_safe_files(root)
     with zipfile.ZipFile(partial, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted((p for p in root.rglob("*") if p.is_file()), key=lambda p: p.relative_to(root).as_posix()):
+        for path in packaged_files:
             zf.write(path, path.relative_to(root).as_posix())
     with tempfile.TemporaryDirectory() as tmp:
         extracted = safe_extract_zip(partial, Path(tmp) / "bundle")

@@ -268,17 +268,58 @@ def _normalize_relative_set(paths: Iterable[str], label: str) -> set[str]:
     return normalized
 
 
+def _is_reparse_or_symlink(metadata: os.stat_result) -> bool:
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    attributes = getattr(metadata, "st_file_attributes", 0)
+    return stat.S_ISLNK(metadata.st_mode) or bool(attributes & reparse_flag)
+
+
+def _require_contained(path: Path, root: Path, relative: str) -> None:
+    try:
+        path.resolve(strict=True).relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"Artifact path escapes resolved-root containment: {relative}") from exc
+
+
+def _walk_safe_files(root: Path) -> list[Path]:
+    """List regular contained files without traversing links or reparse points."""
+
+    try:
+        root_metadata = root.lstat()
+    except FileNotFoundError as exc:
+        raise ValueError(f"Artifact root is not a directory: {root}") from exc
+    if _is_reparse_or_symlink(root_metadata):
+        raise ValueError("Artifact root is a symbolic link or reparse point")
+    if not stat.S_ISDIR(root_metadata.st_mode):
+        raise ValueError(f"Artifact root is not a directory: {root}")
+    resolved_root = root.resolve(strict=True)
+    files: list[Path] = []
+
+    def visit(directory: Path) -> None:
+        with os.scandir(directory) as scanner:
+            entries = sorted(scanner, key=lambda entry: entry.name)
+        for entry in entries:
+            path = Path(entry.path)
+            relative = path.relative_to(root).as_posix()
+            metadata = entry.stat(follow_symlinks=False)
+            if _is_reparse_or_symlink(metadata):
+                raise ValueError(f"Artifact tree contains symbolic link or reparse point: {relative}")
+            _require_contained(path, resolved_root, relative)
+            if stat.S_ISDIR(metadata.st_mode):
+                visit(path)
+            elif stat.S_ISREG(metadata.st_mode):
+                files.append(path)
+            else:
+                raise ValueError(f"Artifact tree contains non-regular entry: {relative}")
+
+    visit(root)
+    return sorted(files, key=lambda path: path.relative_to(root).as_posix())
+
+
 def _inventory_files(root: Path, excludes: set[str]) -> dict[str, Path]:
-    if not root.is_dir():
-        raise ValueError(f"Checksum root is not a directory: {root}")
     result: dict[str, Path] = {}
     collision_keys: set[str] = set()
-    paths = sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix())
-    for path in paths:
-        if path.is_symlink():
-            raise ValueError(f"Checksum tree contains symbolic link: {path.relative_to(root).as_posix()}")
-        if not path.is_file():
-            continue
+    for path in _walk_safe_files(root):
         relative = _safe_posix_path(path.relative_to(root).as_posix())
         key = _collision_key(relative)
         if key in collision_keys:

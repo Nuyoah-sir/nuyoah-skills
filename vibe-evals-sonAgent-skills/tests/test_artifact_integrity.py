@@ -1,7 +1,9 @@
 import hashlib
 import json
+import os
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -23,6 +25,9 @@ from artifact_integrity import (
     verify_sidecar,
     write_checksum_manifest,
 )
+from extract_artifact import extract_artifact
+from package_bundle import package_bundle
+from tests.test_validate_bundle import make_bundle
 
 
 class ArtifactIntegrityTests(unittest.TestCase):
@@ -32,6 +37,21 @@ class ArtifactIntegrityTests(unittest.TestCase):
             for name, content in members:
                 handle.writestr(name, content)
         return archive
+
+    def _directory_link(self, target: Path, link: Path) -> None:
+        if os.name == "nt":
+            command = [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", "mklink", "/J", str(link), str(target)]
+            options = {"capture_output": True, "text": True}
+            if hasattr(subprocess, "CREATE_NO_WINDOW"):
+                options["creationflags"] = subprocess.CREATE_NO_WINDOW
+            result = subprocess.run(command, **options)
+            if result.returncode != 0:
+                self.skipTest(f"cannot create Windows junction: {result.stderr or result.stdout}")
+        else:
+            try:
+                link.symlink_to(target, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"cannot create directory symlink: {exc}")
 
     def test_default_limits_are_the_contract_values(self):
         self.assertEqual(
@@ -319,6 +339,72 @@ class ArtifactIntegrityTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, r"file\.txt") as caught:
                 verify_checksum_manifest(root, manifest, excludes={"files.sha256"})
             self.assertNotIn(str(root), str(caught.exception))
+
+    def test_checksum_inventory_rejects_outside_directory_links(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            outside = base / "outside"
+            outside.mkdir()
+            (outside / "secret.txt").write_text("do not disclose", encoding="utf-8")
+
+            checksum_root = base / "checksums"
+            checksum_root.mkdir()
+            self._directory_link(outside, checksum_root / "junction")
+            with self.assertRaisesRegex(ValueError, "reparse|symbolic|containment"):
+                write_checksum_manifest(checksum_root, excludes={"integrity/files.sha256"})
+            self.assertFalse((checksum_root / "integrity/files.sha256").exists())
+
+    def test_packager_rejects_outside_directory_links(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            outside = base / "outside"
+            outside.mkdir()
+            (outside / "secret.txt").write_text("do not disclose", encoding="utf-8")
+            bundle = make_bundle(base / "bundle-source")
+            self._directory_link(outside, bundle / "junction")
+            archive = base / "disclosure.zip"
+            with self.assertRaisesRegex(ValueError, "reparse|symbolic|containment"):
+                package_bundle(bundle, archive)
+            self.assertFalse(archive.exists())
+            self.assertFalse(archive.with_suffix(".zip.sha256").exists())
+
+    def test_packager_rejects_a_reparse_point_as_its_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            bundle = make_bundle(base / "bundle-target")
+            linked_root = base / "bundle-junction"
+            self._directory_link(bundle, linked_root)
+            archive = base / "root-disclosure.zip"
+            with self.assertRaisesRegex(ValueError, "reparse|symbolic"):
+                package_bundle(linked_root, archive)
+            self.assertFalse(archive.exists())
+
+    def test_extract_artifact_uses_the_verified_archive_identity_after_path_swap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = root / "artifact.zip"
+            package_bundle(make_bundle(root / "original-source"), original)
+            original_digest = sha256_file(original)
+
+            replacement_bundle = make_bundle(root / "replacement-source")
+            (replacement_bundle / "unverified-marker.txt").write_text("replacement", encoding="utf-8")
+            replacement = root / "replacement.zip"
+            package_bundle(replacement_bundle, replacement)
+            self.assertNotEqual(original_digest, sha256_file(replacement))
+
+            real_verify = verify_sidecar
+
+            def verify_then_swap(archive, sidecar, expected_sha256=None):
+                digest = real_verify(archive, sidecar, expected_sha256)
+                os.replace(replacement, original)
+                return digest
+
+            destination = root / "extracted"
+            with mock.patch("extract_artifact.verify_sidecar", side_effect=verify_then_swap):
+                result = extract_artifact("bundle", original, original.with_suffix(".zip.sha256"), destination)
+
+            self.assertEqual(original_digest, result["sha256"])
+            self.assertFalse((destination / "unverified-marker.txt").exists())
 
 if __name__ == "__main__":
     unittest.main()

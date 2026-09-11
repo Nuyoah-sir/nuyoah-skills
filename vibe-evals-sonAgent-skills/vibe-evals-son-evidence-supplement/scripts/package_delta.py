@@ -10,7 +10,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from artifact_integrity import safe_extract_zip, sha256_file, write_checksum_manifest
+from artifact_integrity import _walk_safe_files, safe_extract_zip, sha256_file, write_checksum_manifest
 from validate_delta import validate_delta
 
 EXCLUDES = {"DELTA-READY.json", "integrity/files.sha256", "integrity/validation-report.json"}
@@ -19,7 +19,8 @@ sha256 = sha256_file
 
 
 def package_delta(delta_dir: str | Path, base_dir: str | Path, requests_path: str | Path, output_zip: str | Path) -> dict:
-    delta = Path(delta_dir).resolve()
+    supplied_delta = Path(delta_dir)
+    delta = supplied_delta.resolve()
     base = Path(base_dir).resolve()
     output = Path(output_zip).resolve()
     partial = output.with_suffix(output.suffix + ".partial")
@@ -31,9 +32,7 @@ def package_delta(delta_dir: str | Path, base_dir: str | Path, requests_path: st
             raise
     if output.exists() or output.with_suffix(output.suffix + ".sha256").exists() or partial.exists():
         raise FileExistsError(f"Output already exists: {output}")
-    symlinks = [path.relative_to(delta).as_posix() for path in delta.rglob("*") if path.is_symlink()]
-    if symlinks:
-        raise ValueError(f"Delta contains symbolic links: {symlinks}")
+    _walk_safe_files(supplied_delta)
     requests = Path(requests_path).resolve()
     report = validate_delta(delta, base, requests, require_seal=False)
     if report["result"] != "pass":
@@ -44,8 +43,9 @@ def package_delta(delta_dir: str | Path, base_dir: str | Path, requests_path: st
     (delta / "DELTA-READY.json").write_text(json.dumps({"schema_version": "1.0.0", "delta_id": meta["delta_id"], "base_package_id": meta["base_package_id"], "counts": report["counts"]}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     write_checksum_manifest(delta, excludes=EXCLUDES)
     output.parent.mkdir(parents=True, exist_ok=True)
+    packaged_files = _walk_safe_files(delta)
     with zipfile.ZipFile(partial, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted((p for p in delta.rglob("*") if p.is_file()), key=lambda p: p.relative_to(delta).as_posix()):
+        for path in packaged_files:
             zf.write(path, path.relative_to(delta).as_posix())
     with tempfile.TemporaryDirectory() as tmp:
         extracted = safe_extract_zip(partial, Path(tmp) / "delta")
