@@ -42,6 +42,25 @@ def _issue(code: str, message: str, path: str) -> dict[str, str]:
     return {"code": code, "message": message, "path": path}
 
 
+def derived_status_ignoring_declared(report: dict) -> str:
+    """Derive the status the bundle would have if its declared status were correct.
+
+    ``validate_bundle`` folds its own STATUS_MISMATCH error into ``derived_status``,
+    which makes that field useless for converging the declared value, so recompute
+    it from the counts instead.
+    """
+
+    blocking = [row for row in report.get("errors", []) if row.get("code") != "STATUS_MISMATCH"]
+    if blocking:
+        return "incomplete"
+    counts = report.get("counts", {}) or {}
+    unresolved = sum(
+        int(counts.get(key, 0) or 0)
+        for key in ("pending_adjudications", "unknown_scores", "human_checks", "material_gaps")
+    )
+    return "ready_for_local_review" if unresolved else "ready_for_form"
+
+
 def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -167,12 +186,27 @@ def record_evidence(workspace: str | Path, candidate: str | Path) -> dict[str, A
         raise EvidenceRejected(errors)
     manifest = _read_json(root / "MANIFEST.json")
     written, previous, staged = merge_evidence_batch(root, manifest, rows)
+    manifest_path = root / "MANIFEST.json"
+    manifest_before = manifest_path.read_bytes()
+    previous[manifest_path] = manifest_before
     try:
         for temporary, target in staged:
             os.replace(temporary, target)
-        report = validate_bundle(root, require_seal=False)
-        if report["result"] != "pass":
+        # The declared status is script-owned: converge it, then judge only on the
+        # next report so a status mismatch never masquerades as a content failure.
+        report: dict = {}
+        for _attempt in range(3):
+            report = validate_bundle(root, require_seal=False)
+            codes = {row["code"] for row in report["errors"]}
+            if report["result"] == "pass":
+                break
+            if codes == {"STATUS_MISMATCH"}:
+                manifest["package_status"] = derived_status_ignoring_declared(report)
+                manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                continue
             raise EvidenceRejected(report["errors"])
+        if report.get("result") != "pass":
+            raise EvidenceRejected(report.get("errors", []))
     except BaseException:
         for target, payload in previous.items():
             if payload is None:

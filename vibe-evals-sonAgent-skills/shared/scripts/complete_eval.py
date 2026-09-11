@@ -27,10 +27,13 @@ from package_bundle import package_bundle
 from package_form_ready import SourceChangedError, package_form_ready
 from presentation_workspace import initialize_presentation, record_attestation, record_slot, validate_presentation
 from project_form_ready_scores import project_scores, verify_projected_scores
-from record_evidence import EvidenceRejected, record_evidence
+from record_evidence import EvidenceRejected, derived_status_ignoring_declared, record_evidence
 from record_observation import append_jsonl, interactive_stdin_available
+from record_observation import SUBJECTIVE_CLASS, required_classification
 from record_review import ReviewRejected, record_review
 from register_media import plan_required_media_uses, register_source_media
+from register_media import register_render
+from render_media import render_media
 from render_supporting_outputs import render_supporting_outputs, verify_supporting_outputs
 from summarize_conversation import summarize_conversation
 from validate_bundle import validate_bundle
@@ -117,6 +120,19 @@ def _run_paths(run: Path) -> dict[str, Path]:
             "form": run / "form-ready", "task": Path(json.loads(_state_path(run).read_text(encoding="utf-8"))["task_root"])}
 
 
+def _sync_base_status(v1_root: Path) -> str:
+    """Keep the inner manifest's declared status equal to the script-derived status."""
+
+    report = validate_bundle(v1_root, require_seal=False)
+    derived = derived_status_ignoring_declared(report)
+    path = v1_root / "MANIFEST.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    if manifest.get("package_status") != derived:
+        manifest["package_status"] = derived
+        _atomic(path, _dump(manifest))
+    return derived
+
+
 def command_start(args: argparse.Namespace) -> int:
     task_root, output_root = Path(args.task_root), Path(args.output_root)
     if not task_root.is_absolute() or not output_root.is_absolute():
@@ -186,6 +202,7 @@ def command_accept_evidence(args: argparse.Namespace) -> int:
         _atomic(_state_path(run), _dump(state))
         print(json.dumps(result, ensure_ascii=False))
         return EXIT_UNRESOLVED
+    result["status"] = _sync_base_status(run / "v1")
     _advance(run, state, "evidence_collected", evidence_result=result["status"])
     print(json.dumps(result, ensure_ascii=False))
     return EXIT_OK
@@ -217,6 +234,7 @@ def command_freeze_media(args: argparse.Namespace) -> int:
     _require(state, "base_verified", action="freeze-media")
     form = run / "form-ready"
     manifest, context, freeze = load_form_ready_base(form)
+    classifications = _write_classifications(form, context, manifest)
     plan = plan_required_media_uses(form)
     registered = []
     required = [item for item in plan if item["role"] in {"target", "feedback"}]
@@ -227,8 +245,62 @@ def command_freeze_media(args: argparse.Namespace) -> int:
         print(json.dumps({"planned": len(plan), "required_source_media": len(required), "registered": len(registered)}, ensure_ascii=False))
         return EXIT_UNRESOLVED
     _advance(run, state, "media_frozen", media_registered=len(registered))
-    print(json.dumps({"planned": len(plan), "required_source_media": len(required), "registered": len(registered)}, ensure_ascii=False))
+    print(json.dumps({"planned": len(plan), "required_source_media": len(required), "registered": len(registered),
+                      "classifications": classifications}, ensure_ascii=False))
     return EXIT_OK
+
+
+def _class_objective(criterion: str) -> str:
+    """Pick the least ambitious objective class a criterion can support."""
+
+    if "#" in criterion or any(word in criterion for word in ("\u84dd\u8272", "\u7ea2\u8272", "\u7eff\u8272", "\u9ed1\u8272", "\u767d\u8272")):
+        return "exact_color"
+    if any(word in criterion for word in ("\u6570\u91cf", "\u81f3\u5c11", "\u4e0d\u5c11\u4e8e", "\u4e2a\u6570")):
+        return "count"
+    if any(word in criterion for word in ("\u6587\u6848", "\u6587\u5b57", "label", "\u6807\u7b7e\u540d")):
+        return "literal_text"
+    return "presence"
+
+
+def _write_classifications(form: Path, context, manifest: dict) -> int:
+    """Generate the criterion classifications the observation gate depends on."""
+
+    path = form / "decisions/criterion-classifications.json"
+    if path.is_file():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            existing = {}
+        if existing.get("records"):
+            return len(existing["records"])
+    records = []
+    for rubric in context.rubrics:
+        criterion = str(rubric.get("criterion", ""))
+        adjudication_affected = any(
+            rubric.get("id") in ((row or {}).get("adjudication_ids") or []) for row in context.evidence.values()
+        )
+        forced = required_classification(rubric, adjudication_affected)
+        record = {
+            "outer_package_id": manifest["outer_package_id"],
+            "base_package_id": context.package_id,
+            "base_zip_sha256": manifest["base"]["sha256"],
+            "source_input_digest": context.source_input_digest,
+            "task_id": context.task_id,
+            "rubric_id": rubric.get("id"),
+            "round": rubric.get("round"),
+            "criterion_sha256": rubric.get("criterion_sha256"),
+        }
+        if forced == SUBJECTIVE_CLASS:
+            record.update({"classification": SUBJECTIVE_CLASS, "reason": "Runner default: subjective or policy-ambiguous.",
+                           "requires_remote_human": True})
+        else:
+            record.update({"classification": _class_objective(criterion), "measurable_phrase": criterion,
+                           "reason": "Runner default: objective class derived from the criterion wording.",
+                           "requires_remote_human": False})
+        records.append(record)
+    _atomic(path, _dump({"schema_version": "2.0.0", "outer_package_id": manifest["outer_package_id"],
+                         "base_package_id": context.package_id, "records": records}))
+    return len(records)
 
 
 def command_record_vision(args: argparse.Namespace) -> int:
@@ -241,6 +313,58 @@ def command_record_vision(args: argparse.Namespace) -> int:
     append_jsonl(run / "form-ready" / "observations/machine-vision.jsonl", record)
     print(json.dumps({"appended": record.get("observation_id")}, ensure_ascii=False))
     return EXIT_UNRESOLVED
+
+
+def command_render(args: argparse.Namespace) -> int:
+    """Render the planned passive-SVG candidates and register them as review media."""
+
+    run = _run_dir(args)
+    state = _load_state(run)
+    _require(state, "media_frozen", "observations_complete", action="render")
+    form = run / "form-ready"
+    manifest, context, freeze = load_form_ready_base(form)
+    plan = [item for item in plan_required_media_uses(form) if item["role"].startswith("candidate")]
+    if args.media_id:
+        plan = [item for item in plan if item["media_id"] == args.media_id]
+    rendered, skipped = [], []
+    for item in plan:
+        source = Path(state["task_root"]).joinpath(*item["source_relative_path"].split("/"))
+        if source.suffix.lower() != ".svg":
+            skipped.append({"media_id": item["media_id"], "reason": "not-a-passive-svg-candidate"})
+            continue
+        output = run / "renders" / f"{item['media_id']}.png"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        posix = Path(item["source_relative_path"]).as_posix()
+        owner, round_number = None, None
+        for model_id, model in (freeze.get("model_sources") or {}).items():
+            for number, root in (model.get("round_roots") or {}).items():
+                prefix = str(root).rstrip("/")
+                if prefix and (posix == prefix or posix.startswith(prefix + "/")):
+                    owner, round_number = model_id, int(number)
+            final_root = str(model.get("final_root") or "").rstrip("/")
+            if owner is None and final_root and (posix == final_root or posix.startswith(final_root + "/")):
+                owner = model_id
+                round_number = context.manifest.get("task", {}).get("round_count", 1)
+            if owner is not None:
+                break
+        if owner is None or round_number is None:
+            skipped.append({"media_id": item["media_id"], "reason": "candidate media is not bound to a frozen model root"})
+            continue
+        rubric_ids = [row["id"] for row in context.rubrics if row.get("round") == round_number]
+        if not rubric_ids:
+            skipped.append({"media_id": item["media_id"], "reason": f"no frozen rubric belongs to round {round_number}"})
+            continue
+        try:
+            receipt = render_media(source, output, media_id=item["media_id"], role="candidate_full",
+                                   bindings=[{"model_id": owner, "round": round_number, "rubric_ids": rubric_ids}])
+            registered = register_render(form, output, receipt)
+            rendered.append({"media_id": item["media_id"], "sha256": registered["blob_sha256"]})
+        except (ValueError, OSError, FileExistsError) as exc:
+            skipped.append({"media_id": item["media_id"], "reason": str(exc)})
+    print(json.dumps({"rendered": rendered, "skipped": skipped}, ensure_ascii=False))
+    if not rendered and not skipped:
+        return EXIT_OK
+    return EXIT_OK if rendered else EXIT_UNRESOLVED
 
 
 def command_record_human(args: argparse.Namespace) -> int:
@@ -288,15 +412,29 @@ def command_decide(args: argparse.Namespace) -> int:
     context = load_form_ready_base(form)[1]
     if not (form / "decisions/final-decisions.json").is_file():
         initialize_workspace(form)
+    else:
+        try:
+            existing = json.loads((form / "decisions/final-decisions.json").read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            existing = {}
+        if not existing.get("records"):
+            # initialize_form_ready writes an empty scaffold; replace it with the real slots.
+            (form / "decisions/final-decisions.json").unlink()
+            (form / "decisions/adjudication-audit.json").unlink(missing_ok=True)
+            initialize_workspace(form)
     if args.pair:
         model_id, rubric_id = args.pair.split("/", 1)
         value = json.loads(Path(args.value_json).read_text(encoding="utf-8"))
         record_pair(form, model_id, rubric_id, value)
+    elif args.adjudication or args.gap:
+        value = json.loads(Path(args.value_json).read_text(encoding="utf-8"))
+        record_closure(form, adjudication_id=args.adjudication, gap_id=args.gap, value=value)
     observations = load_observation_registry(form, manifest)
     outcome = validate_final_decisions(context, observations, observations, form / "decisions/final-decisions.json",
                                       audit_path=form / "decisions/adjudication-audit.json")
     if outcome["result"] != "pass":
-        print(json.dumps(outcome, ensure_ascii=False))
+        print(json.dumps({"result": outcome["result"], "errors": outcome["errors"],
+                          "unresolved": outcome["unresolved"]}, ensure_ascii=False))
         return EXIT_UNRESOLVED
     finalize_audit(form)
     _advance(run, state, "decisions_complete", decisions=len(outcome["registry"]))
@@ -420,9 +558,15 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--run", type=Path, required=True)
         sub.add_argument("--record", type=Path, required=True)
         sub.set_defaults(handler=handler)
+    render = subparsers.add_parser("render")
+    render.add_argument("--run", type=Path, required=True)
+    render.add_argument("--media-id", default=None)
+    render.set_defaults(handler=command_render)
     decide = subparsers.add_parser("decide")
     decide.add_argument("--run", type=Path, required=True)
     decide.add_argument("--pair", default=None)
+    decide.add_argument("--adjudication", default=None)
+    decide.add_argument("--gap", default=None)
     decide.add_argument("--value-json", type=Path, default=None)
     decide.set_defaults(handler=command_decide)
     presentation = subparsers.add_parser("record-presentation")
@@ -444,9 +588,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.command == "decide" and bool(args.pair) != bool(args.value_json):
-        print("DECIDE_REQUIRES_PAIR_AND_VALUE: pass both --pair and --value-json, or neither to re-check", file=sys.stderr)
-        return EXIT_INVALID
+    if args.command == "decide":
+        targets = [bool(args.pair), bool(args.adjudication), bool(args.gap)]
+        if sum(targets) > 1:
+            print("DECIDE_TARGET_AMBIGUOUS: pass only one of --pair, --adjudication, or --gap", file=sys.stderr)
+            return EXIT_INVALID
+        if any(targets) and not args.value_json:
+            print("DECIDE_REQUIRES_VALUE: a target also needs --value-json", file=sys.stderr)
+            return EXIT_INVALID
+        if args.value_json and not any(targets):
+            print("DECIDE_REQUIRES_TARGET: --value-json needs --pair, --adjudication, or --gap", file=sys.stderr)
+            return EXIT_INVALID
     try:
         return args.handler(args)
     except SourceChangedError as exc:

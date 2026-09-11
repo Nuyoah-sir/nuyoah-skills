@@ -237,12 +237,19 @@ def _required_media_plan(root: Path) -> list[dict[str, Any]]:
         if Path(relative).suffix.lower() not in extensions:
             continue
         lowered = Path(relative).name.lower()
-        role = "feedback" if "feedback" in lowered else "target"
-        for model in freeze.get("model_sources", {}).values():
-            roots = [model.get("final_root"), *model.get("round_roots", {}).values()]
-            if any(isinstance(prefix, str) and (relative == prefix or relative.startswith(prefix.rstrip("/") + "/")) for prefix in roots):
-                role = "candidate_full"
-                break
+        # A reference image keeps its role even when it lives inside a model output
+        # directory; only unnamed images inside a model root are candidate renders.
+        if "feedback" in lowered:
+            role = "feedback"
+        elif "target" in lowered:
+            role = "target"
+        else:
+            role = "target"
+            for model in freeze.get("model_sources", {}).values():
+                roots = [model.get("final_root"), *model.get("round_roots", {}).values()]
+                if any(isinstance(prefix, str) and (relative == prefix or relative.startswith(prefix.rstrip("/") + "/")) for prefix in roots):
+                    role = "candidate_full"
+                    break
         path_digest = hashlib.sha256(relative.encode("utf-8")).hexdigest()[:12]
         result.append({
             "media_id": f"MEDIA-{path_digest}", "role": role, "source_relative_path": relative,

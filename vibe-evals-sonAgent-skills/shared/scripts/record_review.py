@@ -57,12 +57,14 @@ def _read_jsonl(path: Path) -> list[Any]:
 
 
 def _baseline(root: Path, manifest: dict) -> list[dict]:
+    """Return the frozen rubric rows annotated with their source file and index."""
+
     rows: list[dict] = []
     for entry in sorted(manifest.get("inputs", {}).get("rubrics", []), key=lambda item: item.get("round", 0)):
         value = _read_json(root / entry["path"])
         if not isinstance(value, list):
             raise ValueError(f"Baseline rubric file {entry['path']!r} must be an array")
-        rows.extend(value)
+        rows.extend({**row, "_source_file": entry["path"], "_source_index": index} for index, row in enumerate(value))
     return rows
 
 
@@ -182,8 +184,8 @@ def build_review_artifacts(root: Path, requirements: list[Any], review_items: li
             "round": row.get("round"),
             "criterion": row.get("criterion"),
             "criterion_sha256": _criterion_digest(root, row),
-            "source_file": _source_file(root, manifest, row),
-            "source_index": row.get("source_index", 0),
+            "source_file": row.get("_source_file") or _source_file(root, manifest, row),
+            "source_index": row.get("_source_index", row.get("source_index", 0)),
             "source_basis": item.get("basis"),
             "review": {"basis_status": item.get("basis_status"), "reason": item.get("reason"),
                        "reviewer": item.get("reviewer"), "reviewed_at": item.get("reviewed_at")},
