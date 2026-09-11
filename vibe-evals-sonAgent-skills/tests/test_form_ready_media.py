@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT / "shared" / "scripts"))
 
 from artifact_integrity import sha256_file
 from initialize_form_ready import initialize_form_ready
-from register_media import register_source_media
+from register_media import plan_required_media_uses, register_source_media
 from tests.test_validate_bundle import inventory_digest
 from tests.v2_fixtures import make_form_ready_workspace
 
@@ -163,6 +163,58 @@ class FormReadyMediaTests(unittest.TestCase):
             self.skipTest(f"cannot create directory symlink: {exc}")
         with self.assertRaisesRegex(ValueError, "symbolic link|reparse point"):
             register_source_media(outer, linked, {"input_digest": fixture.source_digest, "source_inventory": [], "source_inventory_digest": inventory_digest([])}, {"media_id": "SRC-1", "role": "target", "source_relative_path": "target.png", "bindings": []})
+
+    def test_source_registration_refuses_any_row_the_sealed_freeze_does_not_confirm(self):
+        fixture = make_form_ready_workspace(self.root / "fixture", complete=False)
+        outer = initialize_form_ready(fixture.sealed_inner_zip, fixture.sealed_inner_sidecar, self.root / "outer")
+        task = self.root / "task"; task.mkdir()
+        forged = task / "forged.png"; forged.write_bytes(PNG)
+        row = {"path": "forged.png", "size": len(PNG), "sha256": hashlib.sha256(PNG).hexdigest()}
+        freeze = {"input_digest": fixture.source_digest, "source_inventory": [row], "source_inventory_digest": inventory_digest([row])}
+        plan = {"media_id": "SRC-forged", "role": "target", "source_relative_path": "forged.png", "bindings": [self._binding(outer, fixture, sha256_file(fixture.sealed_inner_zip))]}
+
+        with self.assertRaisesRegex(ValueError, "SOURCE_FREEZE_AUTHORITY_MISMATCH"):
+            register_source_media(outer, task, freeze, plan)
+
+        index = json.loads((outer / "observations/media-index.json").read_text(encoding="utf-8"))
+        self.assertEqual({}, index["blobs"])
+        self.assertEqual({}, index["uses"])
+        self.assertFalse((outer / "observations/source-media").exists())
+
+    def test_source_registration_refuses_a_freeze_bound_to_another_source_identity(self):
+        fixture = make_form_ready_workspace(self.root / "fixture", complete=False)
+        outer = initialize_form_ready(fixture.sealed_inner_zip, fixture.sealed_inner_sidecar, self.root / "outer")
+        task = self.root / "task"; task.mkdir()
+        (task / "target.png").write_bytes(PNG)
+        row = {"path": "target.png", "size": len(PNG), "sha256": hashlib.sha256(PNG).hexdigest()}
+        freeze = {"input_digest": "f" * 64, "source_inventory": [row], "source_inventory_digest": inventory_digest([row])}
+
+        with self.assertRaisesRegex(ValueError, "SOURCE_FREEZE_IDENTITY_MISMATCH"):
+            register_source_media(outer, task, freeze, {"media_id": "SRC-1", "role": "target", "source_relative_path": "target.png", "bindings": [self._binding(outer, fixture, sha256_file(fixture.sealed_inner_zip))]})
+
+    def test_media_plan_is_derived_from_the_sealed_freeze_and_stays_unresolved(self):
+        fixture = make_form_ready_workspace(self.root / "fixture", complete=False)
+        outer = initialize_form_ready(fixture.sealed_inner_zip, fixture.sealed_inner_sidecar, self.root / "outer")
+
+        plan = plan_required_media_uses(outer)
+        self.assertEqual(["target.png"], [item["source_relative_path"] for item in plan])
+        self.assertEqual(["target"], [item["role"] for item in plan])
+        frozen = {row["path"]: row for row in fixture.authoritative_source_freeze["source_inventory"]}
+        self.assertEqual([frozen["target.png"]["sha256"]], [item["expected_sha256"] for item in plan])
+
+        index = json.loads((outer / "observations/media-index.json").read_text(encoding="utf-8"))
+        self.assertEqual({}, index["blobs"])
+        self.assertEqual({plan[0]["media_id"]}, set(index["uses"]))
+        self.assertEqual("unresolved", index["uses"][plan[0]["media_id"]]["status"])
+        self.assertEqual(plan, plan_required_media_uses(outer))
+
+    def test_media_plan_rejects_a_substituted_claim(self):
+        fixture = make_form_ready_workspace(self.root / "fixture", complete=False)
+        outer = initialize_form_ready(fixture.sealed_inner_zip, fixture.sealed_inner_sidecar, self.root / "outer")
+        forged = {"input_digest": fixture.source_digest, "source_inventory": [{"path": "other.png", "size": 1, "sha256": "a" * 64}], "source_inventory_digest": inventory_digest([{"path": "other.png", "size": 1, "sha256": "a" * 64}])}
+
+        with self.assertRaisesRegex(ValueError, "SOURCE_FREEZE_AUTHORITY_MISMATCH"):
+            plan_required_media_uses(outer, forged)
 
 
 if __name__ == "__main__":

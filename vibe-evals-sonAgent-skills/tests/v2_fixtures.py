@@ -17,7 +17,11 @@ if str(SCRIPTS) not in sys.path:
 
 from artifact_integrity import safe_extract_zip, sha256_file
 from package_bundle import package_bundle
-from tests.test_validate_bundle import make_bundle
+from tests.test_validate_bundle import identity_digest, inventory_digest, make_bundle
+
+FIXTURE_PNG = (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" +
+               (2).to_bytes(4, "big") + (3).to_bytes(4, "big") +
+               b"\x08\x06\x00\x00\x00" + b"\x00\x00\x00\x00")
 
 
 FORM_READY_PATHS = {
@@ -46,6 +50,8 @@ class FormReadyFixture:
     outer: Path
     inner_package_id: str
     source_digest: str
+    task_root: Path
+    authoritative_source_freeze: dict
 
 
 def write_json(path: Path, value: object) -> None:
@@ -62,6 +68,20 @@ def make_form_ready_workspace(root: Path, *, complete: bool) -> FormReadyFixture
 
     root = Path(root)
     inner_source = make_bundle(root / "inner-work")
+    task_root = root / "task-source"
+    task_root.mkdir(parents=True)
+    (task_root / "target.png").write_bytes(FIXTURE_PNG)
+    freeze_path = inner_source / "source-freeze.json"
+    freeze = json.loads(freeze_path.read_text(encoding="utf-8"))
+    media_row = {"path": "target.png", "size": len(FIXTURE_PNG), "sha256": hashlib.sha256(FIXTURE_PNG).hexdigest()}
+    freeze["source_inventory"].append(media_row)
+    freeze["source_inventory_digest"] = inventory_digest(freeze["source_inventory"])
+    freeze["input_digest"] = identity_digest(freeze["source_inventory_digest"], freeze["prompt_source"], freeze["rubric_sources"], freeze["model_sources"], freeze.get("record_source"))
+    write_json(freeze_path, freeze)
+    inner_manifest_path = inner_source / "MANIFEST.json"
+    inner_manifest = json.loads(inner_manifest_path.read_text(encoding="utf-8"))
+    inner_manifest["source_input_digest"] = freeze["input_digest"]
+    write_json(inner_manifest_path, inner_manifest)
     source_archive = root / "source-name.zip"
     package_bundle(inner_source, source_archive)
     inspected = safe_extract_zip(source_archive, root / "inspected-inner")
@@ -117,7 +137,7 @@ def make_form_ready_workspace(root: Path, *, complete: bool) -> FormReadyFixture
     write_json(outer / FORM_READY_PATHS["source_verification"], {"schema_version": "2.0.0", "outer_package_id": outer_id, "base_package_id": inner_manifest["package_id"], "base_zip_sha256": nested_digest, "source_input_digest": inner_manifest["source_input_digest"], "task_id": inner_manifest["task"]["name"], "checked_at": "2026-09-10T10:00:00+08:00", "result": "unchanged"})
     (outer / "provenance").mkdir(exist_ok=True)
     write_json(outer / FORM_READY_PATHS["run_state"], {"schema_version": "2.0.0", "run_id": str(uuid.uuid4()), "outer_package_id": outer_id, "base_package_id": inner_manifest["package_id"], "base_zip_sha256": nested_digest, "source_input_digest": inner_manifest["source_input_digest"], "phase": "base_verified", "completed_phase_receipts": [], "created_at": "2026-09-10T10:00:00+08:00", "updated_at": "2026-09-10T10:00:00+08:00", "terminal_failure_code": None})
-    return FormReadyFixture(nested_archive, nested_archive.with_suffix(".zip.sha256"), outer, inner_manifest["package_id"], inner_manifest["source_input_digest"])
+    return FormReadyFixture(nested_archive, nested_archive.with_suffix(".zip.sha256"), outer, inner_manifest["package_id"], inner_manifest["source_input_digest"], task_root, freeze)
 
 
 def rewrite_manifest(outer: Path, *, schema_version: str, decisions_path: str) -> None:

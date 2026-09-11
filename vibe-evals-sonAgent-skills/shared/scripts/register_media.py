@@ -16,7 +16,7 @@ from typing import Any
 from artifact_integrity import _safe_posix_path, _walk_safe_files, sha256_file, verify_sidecar
 from artifact_integrity import safe_extract_zip
 from form_ready_context import load_base_context
-from validate_bundle import validate_bundle
+from validate_bundle import source_inventory_digest, validate_bundle
 
 MAX_IMAGE_BYTES = 64 * 1024 * 1024
 MAX_DIMENSION = 16_384
@@ -95,7 +95,7 @@ def _load_index(root: Path) -> tuple[Path, dict[str, Any]]:
     return path, index
 
 
-def _base_identity(root: Path) -> tuple[dict[str, Any], Any]:
+def _base_identity(root: Path) -> tuple[dict[str, Any], Any, dict[str, Any]]:
     manifest = json.loads((root / "FORM-READY.json").read_text(encoding="utf-8"))
     archive = root / "base/evidence-bundle.zip"
     sidecar = root / "base/evidence-bundle.zip.sha256"
@@ -106,11 +106,12 @@ def _base_identity(root: Path) -> tuple[dict[str, Any], Any]:
         if report.get("result") != "pass":
             raise ValueError("BASE_VALIDATION_FAILED")
         context = load_base_context(extracted)
-    return manifest, context
+        source_freeze = json.loads((extracted / "source-freeze.json").read_text(encoding="utf-8"))
+    return manifest, context, source_freeze
 
 
 def _normalize_bindings(root: Path, bindings: Any, *, render_scopes: bool) -> list[dict[str, Any]]:
-    manifest, context = _base_identity(root)
+    manifest, context, _ = _base_identity(root)
     if not isinstance(bindings, list) or not bindings:
         raise ValueError("MEDIA_BINDINGS_INVALID")
     rubric_by_id = {row["id"]: row for row in context.rubrics}
@@ -151,7 +152,8 @@ def _register(root: Path, source: Path, media_id: str, role: str, acquisition: s
     if role not in {"target", "feedback", "candidate_full", "candidate_crop"}:
         raise ValueError("MEDIA_ROLE_INVALID")
     path, index = _load_index(root)
-    if media_id in index["uses"]:
+    existing_use = index["uses"].get(media_id)
+    if existing_use is not None and existing_use.get("status") != "unresolved":
         raise ValueError(f"DUPLICATE_MEDIA_ID: {media_id}")
     info = inspect_image(source)
     expected_suffix = ".png" if acquisition == "render" else info["canonical_suffix"]
@@ -177,7 +179,7 @@ def _register(root: Path, source: Path, media_id: str, role: str, acquisition: s
         finally:
             temporary.unlink(missing_ok=True)
     index["blobs"].setdefault(info["sha256"], {key: info[key] for key in ("mime", "size", "width", "height")} | {"path": relative})
-    use = {"blob_sha256": info["sha256"], "role": role, "acquisition_method": acquisition, "bindings": bindings}
+    use = {"blob_sha256": info["sha256"], "role": role, "acquisition_method": acquisition, "bindings": bindings, "status": "registered"}
     if receipt:
         if receipt.get("parent_media_id") is not None: use["parent_media_id"] = receipt["parent_media_id"]
         if receipt.get("crop") is not None: use["crop"] = receipt["crop"]
@@ -191,22 +193,116 @@ def _register(root: Path, source: Path, media_id: str, role: str, acquisition: s
     return {"media_id": media_id, **use}
 
 
+def _canonical(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _authoritative_freeze(root: Path) -> tuple[dict[str, Any], Any, dict[str, Any]]:
+    """Load the sealed freeze that no caller is allowed to overrule."""
+
+    manifest, context, authoritative = _base_identity(root)
+    rows = authoritative.get("source_inventory")
+    if authoritative.get("input_digest") != context.source_input_digest or not isinstance(rows, list):
+        raise ValueError("BASE_SOURCE_FREEZE_MISMATCH")
+    if source_inventory_digest(rows, []) != authoritative.get("source_inventory_digest"):
+        raise ValueError("BASE_SOURCE_FREEZE_MISMATCH")
+    return manifest, context, authoritative
+
+
+def _authoritative_rows(root: Path) -> tuple[dict[str, Any], Any, dict[str, dict[str, Any]]]:
+    manifest, context, freeze = _authoritative_freeze(root)
+    return manifest, context, {row["path"]: row for row in freeze["source_inventory"]}
+
+
+def _claim_inventory(source_freeze: Any) -> list[dict[str, Any]]:
+    """Validate a caller-supplied inventory claim for internal consistency."""
+
+    if not isinstance(source_freeze, dict) or not isinstance(source_freeze.get("source_inventory"), list):
+        raise ValueError("SOURCE_FREEZE_INVALID")
+    rows = source_freeze["source_inventory"]
+    if source_inventory_digest(rows, []) != source_freeze.get("source_inventory_digest"):
+        raise ValueError("SOURCE_FREEZE_INVENTORY_MISMATCH")
+    if source_freeze.get("input_digest") is None:
+        raise ValueError("SOURCE_FREEZE_IDENTITY_MISMATCH")
+    return rows
+
+
+def _assert_frozen_row(row: dict[str, Any], authoritative: dict[str, dict[str, Any]]) -> None:
+    """Refuse any claim about a source path that the sealed freeze does not confirm."""
+
+    relative = row.get("path")
+    if authoritative.get(relative) != row:
+        raise ValueError(f"SOURCE_FREEZE_AUTHORITY_MISMATCH: {relative!r} is not the sealed row")
+
+
+def _required_media_plan(root: Path) -> list[dict[str, Any]]:
+    manifest, context, freeze = _authoritative_freeze(root)
+    authoritative = {row["path"]: row for row in freeze["source_inventory"]}
+    task_binding = {
+        "outer_package_id": manifest["outer_package_id"], "base_package_id": context.package_id,
+        "base_zip_sha256": manifest["base"]["sha256"], "source_input_digest": context.source_input_digest,
+        "task_id": context.task_id,
+    }
+    extensions = {".png", ".jpg", ".jpeg", ".svg"}
+    result = []
+    for relative, row in sorted(authoritative.items()):
+        if Path(relative).suffix.lower() not in extensions:
+            continue
+        lowered = Path(relative).name.lower()
+        role = "feedback" if "feedback" in lowered else "target"
+        for model in freeze.get("model_sources", {}).values():
+            roots = [model.get("final_root"), *model.get("round_roots", {}).values()]
+            if any(isinstance(prefix, str) and (relative == prefix or relative.startswith(prefix.rstrip("/") + "/")) for prefix in roots):
+                role = "candidate_full"
+                break
+        path_digest = hashlib.sha256(relative.encode("utf-8")).hexdigest()[:12]
+        result.append({
+            "media_id": f"MEDIA-{path_digest}", "role": role, "source_relative_path": relative,
+            "expected_sha256": row.get("sha256"), "bindings": [task_binding],
+        })
+    return result
+
+
+def plan_required_media_uses(form_root: str | Path, source_freeze: dict | None = None) -> list[dict[str, Any]]:
+    """Persist the deterministic complete media plan, including unresolved uses.
+
+    The plan is derived from the sealed inner bundle, never from a caller argument.
+    """
+
+    root = Path(form_root)
+    if source_freeze is not None:
+        authoritative = _authoritative_rows(root)[2]
+        for row in _claim_inventory(source_freeze):
+            _assert_frozen_row(row, authoritative)
+    plan = _required_media_plan(root)
+    path, index = _load_index(root)
+    changed = False
+    for item in plan:
+        existing = index["uses"].get(item["media_id"])
+        if existing is None:
+            index["uses"][item["media_id"]] = {
+                "role": item["role"], "acquisition_method": "source_freeze",
+                "bindings": item["bindings"], "status": "unresolved",
+                "expected_sha256": item["expected_sha256"],
+                "source_relative_path": item["source_relative_path"],
+            }
+            changed = True
+        elif existing.get("source_relative_path") not in (None, item["source_relative_path"]):
+            raise ValueError("MEDIA_PLAN_DRIFT")
+    if changed:
+        _atomic_json(path, index)
+    return plan
+
+
 def register_source_media(form_root: str | Path, task_root: str | Path, source_freeze: dict, plan_item: dict) -> dict:
     root, task = Path(form_root), Path(task_root)
     _walk_safe_files(task)
-    manifest = json.loads((root / "FORM-READY.json").read_text(encoding="utf-8"))
-    if source_freeze.get("input_digest") != manifest.get("base", {}).get("source_input_digest"):
+    manifest, context, authoritative = _authoritative_rows(root)
+    if not isinstance(plan_item, dict):
+        raise ValueError("MEDIA_PLAN_ITEM_MISMATCH")
+    if source_freeze.get("input_digest") != context.source_input_digest:
         raise ValueError("SOURCE_FREEZE_IDENTITY_MISMATCH")
-    inventory = source_freeze.get("source_inventory")
-    if not isinstance(inventory, list):
-        raise ValueError("SOURCE_FREEZE_INVALID")
-    try:
-        canonical = sorted(inventory, key=lambda item: item["path"])
-        calculated = hashlib.sha256("\n".join(f"{item['sha256']}  {item['path']}" for item in canonical).encode("utf-8")).hexdigest()
-    except (KeyError, TypeError) as exc:
-        raise ValueError("SOURCE_FREEZE_INVALID") from exc
-    if calculated != source_freeze.get("source_inventory_digest"):
-        raise ValueError("SOURCE_FREEZE_INVENTORY_MISMATCH")
+    inventory = _claim_inventory(source_freeze)
     relative = _safe_posix_path(plan_item.get("source_relative_path"))
     if plan_item.get("role") not in {"target", "feedback"}:
         raise ValueError("SOURCE_MEDIA_ROLE_INVALID")
@@ -219,8 +315,16 @@ def register_source_media(form_root: str | Path, task_root: str | Path, source_f
     except (OSError, ValueError) as exc:
         raise ValueError("SOURCE_ROOT_ESCAPE") from exc
     row = rows[0]
-    if not source.is_file() or source.stat().st_size != row.get("size") or sha256_file(source) != row.get("sha256"):
+    if not source.is_file():
+        raise ValueError("SOURCE_MEDIA_MISSING: source path is not a file")
+    info = inspect_image(source)
+    if Path(relative).suffix.lower() not in ({".jpg", ".jpeg"} if info["mime"] == "image/jpeg" else {info["canonical_suffix"]}):
+        raise ValueError("MIME_EXTENSION_MISMATCH")
+    if plan_item.get("expected_sha256") not in (None, row.get("sha256")):
+        raise ValueError("MEDIA_EXPECTED_SHA_MISMATCH")
+    if source.stat().st_size != row.get("size") or info["sha256"] != row.get("sha256"):
         raise ValueError("SOURCE_MEDIA_MISMATCH: source bytes differ from freeze")
+    _assert_frozen_row(row, authoritative)
     bindings = _normalize_bindings(root, plan_item.get("bindings"), render_scopes=False)
     return _register(root, source, plan_item.get("media_id"), plan_item.get("role"), "source_freeze", bindings)
 
@@ -308,4 +412,4 @@ def register_render(form_root: str | Path, render_path: str | Path, receipt: str
         raise
 
 
-__all__ = ["inspect_image", "register_render", "register_source_media"]
+__all__ = ["inspect_image", "plan_required_media_uses", "register_render", "register_source_media"]
