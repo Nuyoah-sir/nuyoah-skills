@@ -22,6 +22,7 @@ class BaseContext:
     pending_adjudications: tuple[dict[str, Any], ...]
     material_gaps: tuple[str, ...] = ()
     human_check_pairs: frozenset[tuple[str, str]] = frozenset()
+    baseline_rubrics: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,15 @@ def load_base_context(extracted_base: str | Path) -> BaseContext:
     report_path = root / "integrity" / "validation-report.json"
     report = _read_json(report_path) if report_path.is_file() else {}
     task = manifest.get("task", {})
+    baseline: list[dict[str, Any]] = []
+    for entry in sorted(manifest.get("inputs", {}).get("rubrics", []), key=lambda item: item.get("round", 0)):
+        relative = entry.get("path")
+        if not isinstance(relative, str):
+            raise ValueError("Inner rubric input path is missing")
+        value = _read_json(root.joinpath(*relative.split("/")))
+        if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+            raise ValueError(f"Inner rubric input {relative!r} must be an array of objects")
+        baseline.extend(value)
     task_id = task.get("name") or task.get("batch_id")
     if not isinstance(task_id, str) or not task_id:
         raise ValueError("Inner bundle task identity is missing")
@@ -93,6 +103,7 @@ def load_base_context(extracted_base: str | Path) -> BaseContext:
         pending_adjudications=tuple(pending_doc.get("items", [])),
         material_gaps=tuple(report.get("material_gaps", [])),
         human_check_pairs=frozenset(human_checks),
+        baseline_rubrics=tuple(baseline),
     )
 
 

@@ -8,6 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "shared" / "scripts"))
 
 from form_ready_context import BaseContext, ObservationRegistry
+from form_ready_context import load_base_context, load_observation_registry
+from project_form_ready_scores import project_scores, read_scored_summary, verify_projected_scores
 from record_observation import sha256_text
 from validate_final_decisions import accepted_actor_values, load_gap_policy, validate_final_decisions
 from validate_form_ready import validate_form_ready
@@ -194,7 +196,58 @@ class FormReadyDecisionTests(unittest.TestCase):
         self.assertEqual([], list(policy["required"]))
         self.assertEqual("remote_human_with_limitation", policy["unknown_policy"])
 
+    def test_projection_preserves_baseline_fields_and_adds_only_score_and_reason(self):
+        fixture, outer, base_ctx, registry = self._closed_workspace()
+        summary = project_scores(base_ctx, registry, outer)
+        scored = json.loads((outer / "scored/rubrics-model-a.json").read_text(encoding="utf-8"))
+        baseline = base_ctx.baseline_rubrics[0]
+        self.assertEqual({**baseline, "score": 1, "reason": registry[("model-a", "R1-01")]["reason"]}, scored[0])
+        self.assertEqual(set(baseline) | {"score", "reason"}, set(scored[0]))
+        self.assertEqual("scored/rubrics-model-a.json", summary["files"]["model-a"])
+        self.assertEqual("scored/decision-audit.json", summary["audit"])
+        self.assertEqual(summary, read_scored_summary(outer))
+
+    def test_projected_paths_stay_package_relative_and_refuse_overwrite(self):
+        fixture, outer, base_ctx, registry = self._closed_workspace()
+        summary = project_scores(base_ctx, registry, outer)
+        for relative in list(summary["files"].values()) + [summary["audit"]]:
+            self.assertFalse(relative.startswith("/"))
+            self.assertNotIn(":", relative)
+            self.assertNotIn("\\", relative)
+            self.assertTrue(relative.startswith("scored/"))
+        with self.assertRaises(FileExistsError):
+            project_scores(base_ctx, registry, outer)
+
+    def test_replay_is_byte_identical_and_tampering_is_detected(self):
+        fixture, outer, base_ctx, registry = self._closed_workspace()
+        project_scores(base_ctx, registry, outer)
+        self.assertEqual(read_scored_summary(outer), verify_projected_scores(base_ctx, registry, outer))
+
+        target = outer / "scored/rubrics-model-a.json"
+        payload = json.loads(target.read_text(encoding="utf-8"))
+        payload[0]["score"] = 0
+        write_json(target, payload)
+        with self.assertRaisesRegex(ValueError, "not byte-reproducible"):
+            verify_projected_scores(base_ctx, registry, outer)
+
+    def test_projection_refuses_a_missing_decision(self):
+        fixture, outer, base_ctx, registry = self._closed_workspace()
+        with self.assertRaisesRegex(ValueError, "SCORED_DECISION_MISSING"):
+            project_scores(base_ctx, {}, outer)
+
     # -- helpers -----------------------------------------------------------
+
+    def _closed_workspace(self):
+        fixture = make_form_ready_workspace(self.root / f"closed-{len(list(self.root.iterdir()))}", complete=True)
+        base_ctx = load_base_context(fixture.sealed_inner_zip.parents[2] / "inspected-inner")
+        manifest = json.loads((fixture.outer / "FORM-READY.json").read_text(encoding="utf-8"))
+        observations = load_observation_registry(fixture.outer, manifest)
+        outcome = validate_final_decisions(
+            base_ctx, observations, observations, fixture.outer / DECISIONS,
+            audit_path=fixture.outer / AUDIT,
+        )
+        self.assertEqual([], outcome["errors"])
+        return fixture, fixture.outer, base_ctx, outcome["registry"]
 
     def _set_inner_status(self, bundle: Path, status: str) -> None:
         path = bundle / "MANIFEST.json"
