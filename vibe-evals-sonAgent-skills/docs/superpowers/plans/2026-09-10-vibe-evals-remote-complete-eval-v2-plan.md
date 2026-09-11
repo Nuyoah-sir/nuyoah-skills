@@ -1051,3 +1051,11 @@ later tasks must not claim more than the artifacts can prove.
 - On Windows `sys.stdin.isatty()` reports true for the NUL device, so the interactive
   remote-human CLI gates on `GetConsoleMode` instead. Any future interactive gate must keep
   proving it has a real console rather than trusting `isatty()`.
+- A v2 presentation slot carries one evidence list for a whole pros or cons block, while V2.1
+  renders one evidence list per claim. The local renderer therefore lets each claim inherit
+  the slot-level list and records `evidence_granularity.pros_cons = "slot-level"` in the
+  verification receipt. Per-claim attribution needs a presentation-slot schema change; do not
+  describe the current refs as per-claim evidence.
+- `package_form_ready` refuses to reuse a workspace whose run state is terminally failed, so a
+  source change after the freeze cannot be recovered by restoring the original bytes. A fresh
+  run id and a fresh export are required, which is the intended behaviour.
