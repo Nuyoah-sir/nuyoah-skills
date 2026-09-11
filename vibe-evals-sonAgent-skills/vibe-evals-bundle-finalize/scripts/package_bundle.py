@@ -4,70 +4,24 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import shutil
 import sys
 import tempfile
 import zipfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
+from artifact_integrity import safe_extract_zip, sha256_file, write_checksum_manifest
 from validate_bundle import validate_bundle
 
 GENERATED_EXCLUDES = {"READY.json", "integrity/files.sha256", "integrity/validation-report.json"}
-WINDOWS_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
 
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def safe_extract_zip(archive: str | Path, destination: str | Path) -> Path:
-    archive = Path(archive)
-    destination = Path(destination)
-    destination.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(archive) as zf:
-        infos = zf.infolist()
-        if len(infos) > 10000:
-            raise ValueError("ZIP contains more than 10,000 members")
-        seen: set[str] = set()
-        total_size = 0
-        for info in infos:
-            posix = PurePosixPath(info.filename.replace("\\", "/"))
-            is_symlink = ((info.external_attr >> 16) & 0o170000) == 0o120000
-            unsafe_segment = any(":" in part or part.rstrip(" .") != part or part.split(".", 1)[0].upper() in WINDOWS_RESERVED for part in posix.parts)
-            if posix.is_absolute() or ".." in posix.parts or not posix.parts or unsafe_segment or is_symlink:
-                raise ValueError(f"Unsafe ZIP member: {info.filename}")
-            normalized = posix.as_posix()
-            collision_key = normalized.casefold()
-            if collision_key in seen:
-                raise ValueError(f"Duplicate ZIP member: {info.filename}")
-            seen.add(collision_key)
-            if info.file_size > 128 * 1024 * 1024:
-                raise ValueError(f"ZIP member exceeds 128 MiB: {info.filename}")
-            if info.file_size > 1024 * 1024 and info.compress_size > 0 and info.file_size / info.compress_size > 200:
-                raise ValueError(f"ZIP member compression ratio is suspicious: {info.filename}")
-            total_size += info.file_size
-            if total_size > 512 * 1024 * 1024:
-                raise ValueError("ZIP expands beyond the 512 MiB safety limit")
-        zf.extractall(destination)
-    return destination
+# Preserve the v1 import surface for callers of package_bundle.sha256.
+sha256 = sha256_file
 
 
 def _write_checksums(root: Path) -> None:
     target = root / "integrity" / "files.sha256"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    lines = []
-    for path in sorted((p for p in root.rglob("*") if p.is_file()), key=lambda p: p.relative_to(root).as_posix()):
-        relative = path.relative_to(root).as_posix()
-        if relative in GENERATED_EXCLUDES:
-            continue
-        lines.append(f"{sha256(path)}  {relative}")
-    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_checksum_manifest(root, target, excludes=GENERATED_EXCLUDES)
 
 
 def package_bundle(bundle_dir: str | Path, output_zip: str | Path) -> dict:
