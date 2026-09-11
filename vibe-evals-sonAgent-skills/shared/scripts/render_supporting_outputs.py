@@ -191,7 +191,12 @@ def _form_input(form_root: Path, manifest, context, report: dict[str, Any]) -> d
         model_id: _file_digest(form_root / SCORED_DIR / f"rubrics-{model_id}.json")
         for model_id in sorted(report["models"])
     }
-    records: list[dict[str, Any]] = [{"model_id": None, "task": report["task"]}]
+    slots = json.loads((form_root / "presentation/presentation-input.json").read_text(encoding="utf-8"))["slots"]
+    records: list[dict[str, Any]] = [{
+        "model_id": None,
+        "task": report["task"],
+        "evidence_refs": {name: list((slots.get(f"task.{name}") or {}).get("evidence_ids") or []) for name in TASK_SLOTS},
+    }]
     for model_id, model in report["models"].items():
         records.append({
             "model_id": model_id,
