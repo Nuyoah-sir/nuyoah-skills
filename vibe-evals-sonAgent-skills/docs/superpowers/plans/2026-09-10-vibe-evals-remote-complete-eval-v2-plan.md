@@ -1028,3 +1028,26 @@ Before claiming completion, inspect current state against every approved design 
 - Full tests, skill validators, package checksum, install smoke, Git push, and remote HEAD are freshly verified.
 
 If any item lacks direct evidence, continue implementation; do not narrow the definition of done.
+
+## Residual risks recorded during implementation
+
+These were found while implementing Tasks 4 and 5. They do not block those tasks, but
+later tasks must not claim more than the artifacts can prove.
+
+- Render receipts are renderer-authored but not cryptographically bound to the renderer.
+  `register_render` re-derives the output PNG's size, dimensions, and digest from the real
+  bytes and re-checks the named renderer executable's digest and fixed argv, so a
+  fabricated output cannot pass. A caller able to write the receipt file can still assert
+  an execution that never happened. Tasks 7 and 8 must surface this as an explicit
+  limitation instead of presenting the receipt as proof of execution, and the input SVG
+  digest should be bound to a frozen source path before v2.0.0 ships.
+- `candidate_crop` renders are checked as in-bounds regions of a registered full render,
+  but the cropped pixels are not recomputed from the parent blob. A crop therefore records
+  a declared region, not a proven one. Do not describe crops as pixel-verified evidence.
+- `validate_vision_pair` approximates read independence (distinct invocation/session ids,
+  distinct normalized questions and prompt digests, `independent_context`, and a check that
+  the second raw response does not repeat the first answer). It cannot prove the provider
+  ran two genuinely independent inferences.
+- On Windows `sys.stdin.isatty()` reports true for the NUL device, so the interactive
+  remote-human CLI gates on `GetConsoleMode` instead. Any future interactive gate must keep
+  proving it has a real console rather than trusting `isatty()`.
