@@ -1,5 +1,7 @@
 # 补证判断手册
 
+> 只对证据包（v1 证据 ZIP）使用本手册。form-ready 包的缺口要在 `$vibe-evals-son-complete-eval` 流程内闭合，本技能的判断口径不适用于外层包。
+
 ## 逐请求步骤
 
 1. 校验请求 schema、base_package_id、模型和 rubric 外键。

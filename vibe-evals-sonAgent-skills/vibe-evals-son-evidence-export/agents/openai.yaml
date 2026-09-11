@@ -1,4 +1,4 @@
 interface:
   display_name: "Vibe Evals Remote Evidence Export"
   short_description: "Build a verifiable evidence ZIP on the source machine"
-  default_prompt: "Use $vibe-evals-son-evidence-export to inspect the task package and create a verifiable evidence ZIP."
+  default_prompt: "Use $vibe-evals-son-evidence-export only when a verifiable evidence ZIP is the deliverable; for a full cross-machine evaluation use $vibe-evals-son-complete-eval instead."

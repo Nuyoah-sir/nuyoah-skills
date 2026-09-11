@@ -5,6 +5,18 @@ description: Use when a third-party machine has a complete Vibe Evals Coding Age
 
 # Vibe Evals 远端证据导出
 
+## 默认路径已经变了
+
+远端完整评测现在是默认做法：用 `$vibe-evals-son-complete-eval`，它会从原始题目包一路做到封出 `FORM_READY_SEALED` 包，本机只负责校验与渲染。
+
+本技能（evidence-export）保留为**只导出证据**的路径：当你只需要一份可移植的证据 ZIP 交给本机做后续人工评分、或完整评测链路因环境原因无法运行时才使用它。它的产物是证据包，不是交付包；本机仍需另行评分。
+
+选择规则：
+
+- 要做完整评测并交付一份可直接渲染成评分表单的包 → 用 `$vibe-evals-son-complete-eval`。
+- 只要证据、后续评分由本机或人类另做 → 用本技能。
+- 已经在完整评测流程里跑到了取证阶段，就不要再单独跑本技能，避免产出两套互相矛盾的证据。
+
 ## 核心原则
 
 证据 ZIP 是下游评分的事实数据库，不是报告附件。远端只做“发现、取证、实测、摘录、机器建议和校验”；本机或人类做最终口径裁定、最终 0/1、总体印象和 Rank。

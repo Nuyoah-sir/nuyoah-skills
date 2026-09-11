@@ -5,6 +5,10 @@ description: Use when the local Vibe Evals review has returned an evidence_reque
 
 # Vibe Evals 远端定向补证
 
+## 这个技能服务的是哪条链路
+
+补证只服务**证据包**链路（`$vibe-evals-son-evidence-export` 产出的 v1 证据 ZIP）。如果题目已经走 `$vibe-evals-son-complete-eval` 的完整评测流程，缺失或冲突的材料要在那套流程内补齐（回到对应阶段），不要用本技能对一个 form-ready 包做补证——它不认识外层包的封印结构。
+
 ## 核心原则
 
 补证是“回答本机提出的具体证据问题”，不是重跑整批，也不是借机改原分。基包不可变；每次补证生成带独立 delta_id 的增量 ZIP。
