@@ -41,11 +41,14 @@
 <h1>{题目名} — Rubric 打分热力图（{批次标识} 批次）</h1>
 <div class="meta">评测日期：{日期} ｜ Rubric 共 {总条数} 条（rubrics1.json {x} 条 + rubrics2.json {y} 条）｜ 每条 1 分、0/1 二值、<b>无权重</b> ｜ 总体分 = 得分 / {总条数} ｜ {核查状态}</div>
 <div class="cards">
-  <!-- 每模型一张 card：name=模型名、score={得分} / {总条数} = {比例}、sub=扣分条目列表 -->
-  <div class="card"><div class="name">模型 A</div><div class="score" style="color:#5fe08a;">{得分A} / {总条数} = {比例A}</div><div class="sub">扣分：{条目列表，如 R1-08（动画期丢键）}</div></div>
-  <div class="card"><div class="name">模型 B</div><div class="score" style="color:#5fd0e0;">{得分B} / {总条数} = {比例B}</div><div class="sub">扣分：{条目列表，如 R1-08（动画期丢键）、R2-01（第三关左侧目标偏 42°）}</div></div>
-  <!-- Rank 卡：N≥2 时 {A > B} 为排序结论，sub 写分差条目说明（如：分差条目：仅 R2-01（B=0 / A=1），其余 {N} 条同判）；N=1 时 score 写“单模型”，sub 写“无同场比较/无排序”。 -->
-  <div class="card"><div class="name">Rank</div><div class="score">{A &gt; B}</div><div class="sub">{分差条目说明}</div></div>
+  <!-- 每模型一张 card：name=模型名、score={得分} / {总条数} = {比例}、sub=扣分条目列表 + “总体印象 {印象分}”（把印象分写进 sub，便于与 Rank 卡对上） -->
+  <div class="card"><div class="name">模型 A</div><div class="score" style="color:#5fe08a;">{得分A} / {总条数} = {比例A}</div><div class="sub">扣分：{条目列表，如 R1-08（动画期丢键）}　｜　总体印象 {印象分A}</div></div>
+  <div class="card"><div class="name">模型 B</div><div class="score" style="color:#5fd0e0;">{得分B} / {总条数} = {比例B}</div><div class="sub">扣分：{条目列表，如 R1-08（动画期丢键）、R2-01（第三关左侧目标偏 42°）}　｜　总体印象 {印象分B}</div></div>
+  <!-- Rank 卡：N≥2 时 {A > B} 为排序结论（按总体印象分定档，不是按 rubric 分），sub 写分差条目说明（如：分差条目：仅 R2-01（B=0 / A=1），其余 {N} 条同判）。
+       印象分相同的模型要写三层法结论：第 2 层逐维对照仍分不出时，score 写 {X = Y（需人工定档）}，sub 列出 tie-breaker（来源：Phase 4/5 已产出的还原度实测、可见缺陷数、错项性质；没有现成材料就写“tie-breaker 待补”，不要现编数字）；人工裁定后改为 {X = Y} 并注明“打分人 {日期} 裁定判并列/定序”。
+       口径硬约束：3 分 = 完成所有基本要求、4 分须有特别亮点；不得用 rubric 总分小数硬排。
+       N=1 时 score 写“单模型”，sub 写“无同场比较/无排序”。 -->
+  <div class="card"><div class="name">Rank</div><div class="score">{A &gt; B}</div><div class="sub">{分差条目说明；并列/需人工定档时写明三层法结论与 tie-breaker}</div></div>
 </div>
 <table>
   <thead>

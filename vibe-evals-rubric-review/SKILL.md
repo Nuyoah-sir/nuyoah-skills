@@ -153,3 +153,4 @@ description: Use when reviewing Vibe Evals multi-turn task-package rubrics again
 - [ ] 理解md 与 rubrics JSON 的 id、criterion、数量一致；若文档引用了分数，再核对分数与其来源一致
 - [ ] 待裁定项全部登记（编号+证据+建议口径）（本技能不裁定，留待打分人）
 - [ ] 涉及 0–4 分档的口径已按「3 分 = 完成所有基本要求、4 分须有特别亮点、低于 3 分须有扣分依据」登记（见「分档口径的登记义务」）
+- [ ] 存在排序争议（印象分相同、多维标签分互有胜负）时，已在裁定节登记为待裁定项并注明“需人工干预”＋ tie-breaker 证据（见「分档口径的登记义务」末条），没有在文档里硬排先后
