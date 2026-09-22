@@ -249,6 +249,26 @@ def paragraph_pieces(p_el, rels, media_out, assets_url) -> list[tuple[str, bool,
 
 
 IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+# 章节级标题的手写编号，例如「一、平台操作指南」
+CN_SECTION_RE = re.compile(r"^[一二三四五六七八九十百]+、")
+
+
+def is_section_heading(text: str, numbering: "Numbering", num_pr) -> bool:
+    """判断二级标题是章节还是章节内的子标题。
+
+    源文档里章节标题有两种写法：手写中文序号（「一、平台操作指南」）和 Word 中文数字
+    自动编号。子标题（「1、Rubric 的数据结构」「2、…」）用的是十进制列表，落在另一套
+    编号里。只有章节标题才推进章节计数器，否则子标题会把后续章节号顶高
+    （例如把「七、检查」顶成「九、检查」）。
+    """
+    if num_pr is not None and num_pr.find(qn("w:numId")) is not None:
+        resolved = numbering.resolve(num_pr)
+        if resolved is not None:
+            _, levels, ilvl = resolved
+            fmt = (levels.get(ilvl) or {}).get("fmt", "decimal")
+            return fmt.startswith(("chinese", "japanese"))
+        return False
+    return bool(CN_SECTION_RE.match(text))
 
 
 def render_pieces(pieces, emphasis: bool = True) -> str:
@@ -338,9 +358,16 @@ def convert(src: Path, out: Path, assets_dir: Path, assets_url: str, header: str
                         blocks.append(text)
                     continue
                 if level == 2:
-                    number = numbering.heading_number()
-                    if num_pr is not None and num_pr.find(qn("w:numId")) is not None:
-                        marker = numbering.list_marker(num_pr, override=number)
+                    numbered = num_pr is not None and num_pr.find(qn("w:numId")) is not None
+                    if is_section_heading(text, numbering, num_pr):
+                        number = numbering.heading_number()
+                        if numbered:
+                            marker = numbering.list_marker(num_pr, override=number)
+                            if marker:
+                                text = f"{marker}{text}"
+                    elif numbered:
+                        # 子标题走自己的编号列表，不参与章节计数
+                        marker = numbering.list_marker(num_pr)
                         if marker:
                             text = f"{marker}{text}"
                 blocks.append("#" * min(level, 6) + " " + text)
