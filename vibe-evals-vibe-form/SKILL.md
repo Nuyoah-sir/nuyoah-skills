@@ -61,7 +61,7 @@ description: Use when the user says “填 Vibe 评分表单” or asks to compl
 **人评标准（《Coding Agent 人评标准 V 2.1》）的取用**：本技能的表单口径（Pointwise 维度分档、Rank、Vibe Tags、备注）以该文档为准，按下列顺序查找，命中即用：
 
 1. 仓库内全文：`../references/Coding Agent 人评标准 V2.1.md`（原始文档 `../references/Coding Agent 人评标准 V 2.1.docx`），相对本 `SKILL.md` 所在目录；
-2. 本技能自带的「四、Pointwise 多维度评分」权威转录：[`references/人评标准V2.1-Pointwise多维度评分.md`](references/人评标准V2.1-Pointwise多维度评分.md)——只覆盖第四节，涉及 Rank（第三节）、Vibe Tags（第五节）时必须回到全文；
+2. 本技能自带的「四、Pointwise 多维度评分」权威转录：[`references/人评标准V2.1-Pointwise多维度评分.md`](references/人评标准V2.1-Pointwise多维度评分.md)——只覆盖第四节，涉及 Rank（第三节）、Vibe Tags（第六节）时必须回到全文；
 3. 拷贝安装后的位置：`~/.claude/skills/references/...`、`~/.agents/skills/references/...`（Windows 为 `%USERPROFILE%\.claude\skills\references\...`）；
 4. 三处都取不到时：向用户报「已查找路径清单」并索取路径，不猜标准原文；用户明确同意后可按「前置缺失」记录在案继续，并在表单顶部标注缺失项与受影响的口径。
 
