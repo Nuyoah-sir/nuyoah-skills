@@ -56,6 +56,14 @@ vibe-evals-rubric-review 的下游主技能：证据收集（并行子智能体�
 
 检查输出目录或题包内是否已有 vibe-evals-rubric-review 的产物（rubrics1..N.json + 对每条rubric的理解.md）；缺失则提示先跑该技能；用户坚持时降级用基线 rubrics 直接跑，并在反馈报告“判分口径说明”注明“未经 rubric-review 审查”。
 
+**前置材料（离线副本，命中即用）**：本技能产出的 `反馈报告.md` 含 Rank、排序口径与洞察，依据是《Coding Agent 人评标准 V 2.1》和 rubric-review 的裁定节；排查判分口径争议时还会用到多轮评测技能的定义。按下列顺序查找，不要依赖本机是否装过这两个技能：
+
+1. 仓库内副本（相对本 `SKILL.md` 所在目录）：`../references/Coding Agent 人评标准 V2.1.md`、`../multi-turn-eval/SKILL.md`；
+2. 拷贝安装后：`~/.claude/skills/references/...`、`~/.agents/skills/references/...`、`~/.claude/skills/multi-turn-eval/SKILL.md`、`~/.agents/skills/multi-turn-eval/SKILL.md`（Windows 为 `%USERPROFILE%\.claude\skills\...`）；
+3. 用户题包随附材料或用户指定路径。
+
+三处都取不到时：先把「已查找路径清单」报给用户并索取路径，不猜标准原文；用户明确同意后可按「前置缺失」记录在案继续，并在报告开头的判分口径说明里标注缺失项与受影响内容。
+
 ## Phase 1: 证据收集（按模型独立派发，受可用并发槽位约束）
 
 - 使用 Codex `spawn_agent` 为每个模型派发一个独立子智能体；模型数大于可用槽位时分批派发并用 `wait_agent` 等待。消息来自 [`templates/证据收集子智能体prompt模板.md`](templates/证据收集子智能体prompt模板.md)，替换 `{MODEL}` / `{RUBRICS_TEXT}` / `{MODEL_SOURCE_DIR}` / `{CONV_JSON_PATH}` / `{SNAPSHOT_DIRS}` / `{RECORD_TXT}` / `{OUTPUT_DIR}` 占位符；

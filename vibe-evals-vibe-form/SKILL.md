@@ -58,6 +58,13 @@ description: Use when the user says “填 Vibe 评分表单” or asks to compl
 
 检查输出目录内是否已有 vibe-evals-scoring 的产物：`反馈报告.md` + 每模型 `rubrics-{X}.json`（二者是本技能的数据源）。缺失则提示先跑 vibe-evals-scoring，不降级硬填；仅有原始模型代码、prompt 或未裁定的预打分都不满足前置条件。
 
+**人评标准（《Coding Agent 人评标准 V 2.1》）的取用**：本技能的表单口径（Pointwise 维度分档、Rank、Vibe Tags、备注）以该文档为准，按下列顺序查找，命中即用：
+
+1. 仓库内全文：`../references/Coding Agent 人评标准 V2.1.md`（原始文档 `../references/Coding Agent 人评标准 V 2.1.docx`），相对本 `SKILL.md` 所在目录；
+2. 本技能自带的「四、Pointwise 多维度评分」权威转录：[`references/人评标准V2.1-Pointwise多维度评分.md`](references/人评标准V2.1-Pointwise多维度评分.md)——只覆盖第四节，涉及 Rank（第三节）、Vibe Tags（第五节）时必须回到全文；
+3. 拷贝安装后的位置：`~/.claude/skills/references/...`、`~/.agents/skills/references/...`（Windows 为 `%USERPROFILE%\.claude\skills\references\...`）；
+4. 三处都取不到时：向用户报「已查找路径清单」并索取路径，不猜标准原文；用户明确同意后可按「前置缺失」记录在案继续，并在表单顶部标注缺失项与受影响的口径。
+
 ## Phase 1: 材料通读
 
 1. **反馈报告.md**：Rank（名次与并列关系）、4W1H（各模型问题归纳）、差异总表（拉开分差的条目）、判分口径（裁定项最终口径）；
@@ -146,7 +153,7 @@ description: Use when the user says “填 Vibe 评分表单” or asks to compl
 4. **落盘前自查**：逐条过「落盘前自查清单」，并机械统计每块标签和跨块分数次数，全部通过后再交付；同时附每条事实的出处清单；
 5. **改动范围**：只改目标模型的文字反馈三块与速记风格说明；分数、机器证据、Vibe 标签、其他模型节、已人工确认内容一律不动（存量改稿模式）。
 
-**rubric 结果 → 维度分映射规则（打维度分、给 Pros/Cons 贴维度前，先读 `references\人评标准V2.1-Pointwise多维度评分.md` 的维度定义与 0-4 分档位表）：**
+**rubric 结果 → 维度分映射规则（打维度分、给 Pros/Cons 贴维度前，先读 [`references/人评标准V2.1-Pointwise多维度评分.md`](references/人评标准V2.1-Pointwise多维度评分.md) 的维度定义与 0-4 分档位表）：**
 
 - G1 指令与约束遵循 ← Explicit/约束类条目得分；漏要求、多轮遗忘前文要求都归这里；
 - G2 功能交付完整性 ← 功能/bug 类条目得分 + 4W1H 问题（只评最终轮，看最终产物）；

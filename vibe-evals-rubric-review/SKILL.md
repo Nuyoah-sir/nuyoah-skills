@@ -12,12 +12,19 @@ description: Use when reviewing Vibe Evals multi-turn task-package rubrics again
 
 ## 前置条件（MANDATORY，任何材料收集前执行）
 
-开跑前必须完成以下两项阅读，未完成不得进入 Phase 0：
+开跑前必须完成以下两项阅读，未完成不得进入 Phase 0。两项材料都随本仓库提供离线副本（仓库地址 `https://github.com/Nuyoah-sir/nuyoah-skills.git`），**查找顺序的第一步是仓库/技能目录内的相对路径**，不依赖本机是否装过这两个技能：
 
-1. **阅读多轮评测技能（multi-turn-eval）**：该技能在技能目录中——`~/.claude/skills/multi-turn-eval/SKILL.md` 或 `~/.agents/skills/multi-turn-eval/SKILL.md`（通常两处都有副本，找不到就问用户），通读其 SKILL.md。目的：明白该技能的输入（题目 spec 文件 / 模型输出目录 / 输出目录 / 模型对话目录，会话记录可选）、输出（反馈报告.md、Rubric.json、Rubric打分结果\Rubric_X打分结果.json、solution\solve_X.sh、tests\test.sh）与目的（多轮后端评测流水线：解析 spec → 生成 solve 脚本 + 黑盒 test.sh → Docker 逐模型评测 → 聚合评分），与本技能的人评路线（rubric-review → scoring → vibe-form）相区分；
-2. **阅读人评标准**：本机《Coding Agent 人评标准 V 2.1》文档（题包随附材料或用户指定的位置，找不到就问用户取文件路径），重点读「二、打分流程指南」「三、多模型Rank（3.2 排序判断原则 / 3.3 排序理由怎么写 / 3.4 洞察怎么写）」「四、Pointwise 多维度评分」「五、Vibe Tags 与备注」。判分口径、Rank、洞察与备注的要求以此为准。
+| 材料 | ① 仓库内副本（相对本 `SKILL.md` 所在目录） | ② 技能目录（拷贝安装后） | ③ 用户侧 |
+| --- | --- | --- | --- |
+| multi-turn-eval 技能 | `../multi-turn-eval/SKILL.md` | `~/.claude/skills/multi-turn-eval/SKILL.md`、`~/.agents/skills/multi-turn-eval/SKILL.md` | 题包随附材料或用户指定路径 |
+| 《Coding Agent 人评标准 V 2.1》全文 | `../references/Coding Agent 人评标准 V2.1.md`（原始文档 `../references/Coding Agent 人评标准 V 2.1.docx`） | `~/.claude/skills/references/Coding Agent 人评标准 V2.1.md`、`~/.agents/skills/references/...` | 题包随附材料或用户指定路径 |
 
-材料缺失或无法读取时**停下来问用户**，不猜、不跳过。
+Windows 下 `~` 即 `%USERPROFILE%`（如 `%USERPROFILE%\.claude\skills\...`）；按 ①②③ 依次查找，**命中即用，不必找齐三处**（找不到某个路径属正常，继续下一处，不要因此中断）。
+
+1. **阅读多轮评测技能（multi-turn-eval）**：通读其 `SKILL.md`。目的：明白该技能的输入（题目 spec 文件 / 模型输出目录 / 输出目录 / 模型对话目录，会话记录可选）、输出（反馈报告.md、Rubric.json、Rubric打分结果\Rubric_X打分结果.json、solution\solve_X.sh、tests\test.sh）与目的（多轮后端评测流水线：解析 spec → 生成 solve 脚本 + 黑盒 test.sh → Docker 逐模型评测 → 聚合评分），与本技能的人评路线（rubric-review → scoring → vibe-form）相区分；
+2. **阅读人评标准**：《Coding Agent 人评标准 V 2.1》**完整文档**（优先读仓库内 Markdown 全文版 `references/Coding Agent 人评标准 V2.1.md`；需要原始排版与平台截图时读同名 `.docx`），重点读「二、打分流程指南」「三、多模型Rank（3.2 排序判断原则 / 3.3 排序理由怎么写 / 3.4 洞察怎么写）」「四、Pointwise 多维度评分」「五、Vibe Tags 与备注」。判分口径、Rank、洞察与备注的要求以此为准。
+
+**材料取不到时的处理（不得静默跳过）**：先把「已查找过的路径清单」报给用户，然后二选一——(a) 由用户提供材料路径；(b) 用户明确同意后，以「前置缺失」记录在案继续：在最终交付的理解md / 报告开头写明缺哪一项、缺失已影响到哪些判定口径（如 Rank 排序原则、洞察写法、Pointwise 维度分档），并在交付说明里再次标注。**找不到就问，不猜、不跳过、不编造标准原文。**
 
 ## 通用骨架
 

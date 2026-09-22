@@ -6,4 +6,6 @@
 *.jpeg binary
 *.gif binary
 *.ico binary
+*.docx binary
+*.xlsx binary
 *.zip binary
