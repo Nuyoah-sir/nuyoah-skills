@@ -312,6 +312,8 @@ def convert(src: Path, out: Path, assets_dir: Path, assets_url: str, header: str
     rels = doc.part.rels
     media_out: list[tuple[str, str]] = []
     blocks: list[str] = []
+    last_level = 1
+    style_levels: dict[str, int] = {}
 
     for child in doc.element.body.iterchildren():
         name = local_name(child.tag)
@@ -321,7 +323,14 @@ def convert(src: Path, out: Path, assets_dir: Path, assets_url: str, header: str
             p_pr = par._p.pPr
             num_pr = p_pr.numPr if p_pr is not None else None
             if style.startswith("Heading") or style == "Title":
-                level = 1 if style == "Title" else int(re.search(r"(\d+)", style).group(1)) + 1
+                if style in style_levels:
+                    level = style_levels[style]
+                else:
+                    natural = 1 if style == "Title" else int(re.search(r"(\d+)", style).group(1)) + 1
+                    # 源文档里有标题跳级（章是 Heading 1、节却写成 Heading 3），按层级补平并
+                    # 让同一 Word 样式在 Markdown 里保持同一层级
+                    level = min(natural, last_level + 1)
+                    style_levels[style] = level
                 text = paragraph_markdown(par, rels, media_out, assets_url, emphasis=False)
                 plain = IMAGE_RE.sub("", text).strip()
                 if not plain:
@@ -335,6 +344,7 @@ def convert(src: Path, out: Path, assets_dir: Path, assets_url: str, header: str
                         if marker:
                             text = f"{marker}{text}"
                 blocks.append("#" * min(level, 6) + " " + text)
+                last_level = level
                 continue
             text = paragraph_markdown(par, rels, media_out, assets_url)
             if not text:
