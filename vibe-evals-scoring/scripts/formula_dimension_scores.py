@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""旁路计算维度分：按《Coding Agent 人评标准 V 2.1》五、Rubric 的映射规则出数。
+"""计算维度分（G1/G2/S1 的定稿来源）：按《Coding Agent 人评标准 V 2.1》五、Rubric 的映射规则出数。
 
     维度分 = 向下取整到 0.5 的倍数( 通过条数 k / 总条数 n × 4 )
 
@@ -8,7 +8,7 @@
 - 只吃 rubrics-{X}.json 里已确认的 score，0/1 二值，不给部分分；
 - 条目按各自的 dimension 字段归类，多选时逐维度各计一次；
 - 没标 dimension 的条目只登记不计分；没有 score 的条目列为未判定缺口，不按 0 计；
-- 本结果是**旁路数据**：不参与 Rank、总体印象分与 V2.1 表单的维度分。
+- 本结果是 **G1/G2/S1 的定稿依据**（2026-09-23）；G3 与总体印象分不在本表范围内，仍按人工判分。
 
 用法（Windows 用 py 启动器）：
     py formula_dimension_scores.py rubrics-*.json [--out 维度分-公式.md] [--json 维度分-公式.json]
@@ -141,7 +141,7 @@ def render(results: list[dict]) -> str:
     lines = [
         "# 维度分（公式）",
         "",
-        "> **旁路数据，不进定稿**：由 `rubrics-{X}.json` 的 0/1 判定直接算出，"
+        "> **G1/G2/S1 的定稿依据**：由 `rubrics-{X}.json` 的 0/1 判定直接算出，"
         "不参与 Rank、总体印象分与 V2.1 表单的维度分，也不改动「3 分 = 验收线、4 分必须有特别亮点」的口径。",
         "",
         "口径：《Coding Agent 人评标准 V 2.1》五、Rubric「Rubric与维度分数映射规则」——"
@@ -192,7 +192,7 @@ def render(results: list[dict]) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="旁路计算维度分（向下取整到 0.5 的倍数）")
+    parser = argparse.ArgumentParser(description="计算维度分（G1/G2/S1 定稿来源）（向下取整到 0.5 的倍数）")
     parser.add_argument("files", nargs="+", help="rubrics-{X}.json（每个文件一个模型）")
     parser.add_argument("--out", help="写出 Markdown 表格")
     parser.add_argument("--json", help="写出机器可读结果")
