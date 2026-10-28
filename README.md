@@ -18,7 +18,7 @@ vibe-evals-rubric-review 的「前置条件（MANDATORY）」要求开跑前先�
 | 材料 | 仓库内路径 | 用途（被谁引用） |
 | --- | --- | --- |
 | multi-turn-eval 技能全文 | [multi-turn-eval/](multi-turn-eval/SKILL.md) | 对照多轮后端评测流水线的输入（spec、模型输出、输出目录、对话记录）与产出（反馈报告、Rubric.json、solve/test 脚本），与人评路线区分。被 vibe-evals-rubric-review、vibe-evals-scoring 前置引用。 |
-| 《Coding Agent 人评标准 V 2.1》完整文档（Markdown 全文） | [references/Coding Agent 人评标准 V2.1.md](references/Coding%20Agent%20人评标准%20V2.1.md) | 打分流程指南、多模型 Rank（排序判断原则 / 排序理由 / 洞察）、Pointwise 多维度评分、Vibe Tags 与备注的权威依据。被 vibe-evals-rubric-review、vibe-evals-scoring、vibe-evals-vibe-form 引用。 |
+| 《Coding Agent 人评表格作业标准 V 2.1》完整文档（Markdown 全文，1022 更新版） | [references/Coding Agent 人评表格作业标准 V2.1.md](references/Coding%20Agent%20人评表格作业标准%20V2.1.md) | 打分流程指南、多模型 Rank（排序判断原则 / 排序理由 / 洞察）、Pointwise 多维度评分、Vibe Tags 与备注的权威依据。被 vibe-evals-rubric-review、vibe-evals-scoring、vibe-evals-vibe-form 引用。 |
 | 同一文档的原始 Word 版本 | `references/Coding Agent 人评标准 V 2.1.docx` | 需要原始排版、平台截图或对外引用来源时读；与上游发布文件逐字节一致。 |
 | 文档内图片资源 | `references/assets/人评标准V2.1/` | Markdown 全文按原位置内嵌引用的截图。 |
 
