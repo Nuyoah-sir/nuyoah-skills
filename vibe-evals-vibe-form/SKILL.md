@@ -60,8 +60,8 @@ description: Use when the user says “填 Vibe 评分表单” or asks to compl
 
 **人评标准（《Coding Agent 人评标准 V 2.1》）的取用**：本技能的表单口径（Pointwise 维度分档、Rank、Vibe Tags、备注）以该文档为准，按下列顺序查找，命中即用：
 
-1. 仓库内全文：`../references/Coding Agent 人评表格作业标准 V2.1.md`（2026-10-22 更新版，当前权威；旧版 `../references/archive/Coding Agent 人评标准 V2.1（0917 旧版）.md` 仅作对照），相对本 `SKILL.md` 所在目录；
-2. 本技能自带的「3. Rubrics 与维度打分」权威转录：[`references/人评标准V2.1-Pointwise多维度评分.md`](references/人评标准V2.1-Pointwise多维度评分.md)——覆盖 1022 版 §3.1—3.5（字段、五维、公式、分档、Baseline 扣分、Pros/Cons、总体印象），涉及 Rank/洞察（§4）与 Vibe Tags 时必须回到全文；
+1. 仓库内全文：`../references/Coding Agent 人评标准 V2.1.md`（原始文档 `../references/Coding Agent 人评标准 V 2.1.docx`），相对本 `SKILL.md` 所在目录；
+2. 本技能自带的「四、Pointwise 多维度评分」权威转录：[`references/人评标准V2.1-Pointwise多维度评分.md`](references/人评标准V2.1-Pointwise多维度评分.md)——只覆盖第四节，涉及 Rank（第三节）、Vibe Tags（第六节）时必须回到全文；
 3. 拷贝安装后的位置：`~/.claude/skills/references/...`、`~/.agents/skills/references/...`（Windows 为 `%USERPROFILE%\.claude\skills\references\...`）；
 4. 三处都取不到时：向用户报「已查找路径清单」并索取路径，不猜标准原文；用户明确同意后可按「前置缺失」记录在案继续，并在表单顶部标注缺失项与受影响的口径。
 
@@ -213,6 +213,7 @@ description: Use when the user says “填 Vibe 评分表单” or asks to compl
 
 **排序理由：**
 - 结构：**先一句分档**（这道题靠什么分档，常按 Must have 或硬失败先切两档），**再逐模型一段**，段首写「测试模型X 排第N」；并列写成「测试模型X = 测试模型Y 并列第N」，并在段内说清两者各赢哪一头、为什么拉不开。N=1 时写一句“单模型，无同场比较/无排序”。
+- **同分不同序必须单独交代**：总体印象分相同但名次不同的，段内要写一句“它和 X、Y 同为 N 分，排在前面/后面是因为……”，给出可观察的差异（丢的条数、错在哪个环节、图面还是载体），不许只写“略好一点”。
 - 每段三件事：好在哪（可观察事实）→ 为什么只能停在这个位置（缺口/失分）→ 拿相邻模型作参照（“相比测试模型X，……”）。
 - 篇幅随模型数增长，每个模型 1—3 句，不设全节字数上限；段落顺序与 Rank 严格一致。
 - 只写事实：口语、场景化描述（“玩家还没升空就被打”“水面像一张动态贴纸”），不写“表现良好/完成度较高/整体不错”这类空评价，不写截断、重启、上下文耗尽这类过程流水账。
