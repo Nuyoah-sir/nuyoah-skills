@@ -1,6 +1,6 @@
 # 证据收集子智能体 Prompt 模板
 
-> 派发方式：vibe-evals-scoring Phase 1 使用 Codex `spawn_agent` 为每个模型派发一个独立子智能体；模型数超过可用槽位时分批派发并以 `wait_agent` 等待。用本模板替换占位符：`{MODEL}`（模型标识）、`{MODEL_SOURCE_DIR}`（最终产物绝对路径）、`{CONV_JSON_PATH}`（对话记录 json 绝对路径）、`{SNAPSHOT_DIRS}`（轮次快照目录列表）、`{RECORD_TXT}`（记录.txt 路径或“无”）、`{RUBRICS_TEXT}`（基线 rubrics JSON 全文）、`{OUTPUT_DIR}`（输出目录，探针留档用）。建议使用 `fork_turns: "none"` 并把所需上下文完整放入消息，避免把其他模型材料带入取证任务。
+> 派发方式：vibe-evals-scoring Phase 1 使用宿主可用的子代理工具（例如 DSH：`subagent` / `subagent_fork`；Codex：`spawn_agent`）为每个模型派发一个独立子智能体；模型数超过可用槽位时分批派发，并用宿主可用的等待机制（如 DSH：`list_agents` / `send_message`；Codex：`wait_agent`）等待。无等价子代理能力时停止询问，不得用主会话阅读替代。用本模板替换占位符：`{MODEL}`（模型标识）、`{MODEL_SOURCE_DIR}`（最终产物绝对路径）、`{CONV_JSON_PATH}`（对话记录 json 绝对路径）、`{SNAPSHOT_DIRS}`（轮次快照目录列表）、`{RECORD_TXT}`（记录.txt 路径或“无”）、`{RUBRICS_TEXT}`（基线 rubrics JSON 全文）、`{OUTPUT_DIR}`（输出目录，探针留档用）。让子智能体在独立上下文工作，并把所需上下文完整放入消息，避免把其他模型材料带入取证任务。
 
 ## Prompt 正文
 

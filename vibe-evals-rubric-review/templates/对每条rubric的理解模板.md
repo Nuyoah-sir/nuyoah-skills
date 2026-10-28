@@ -3,6 +3,7 @@
 > 题目：{题目名}（{N} 轮——{每轮一句话概述}）
 > Rubric 总量：{M} 条 = `rubrics1.json`（R1，x 条）+ `rubrics2.json`（R2，y 条）{...}，未改、未增、未删（用户指示）
 > 本批模型：{模型列表}（{各模型产物状态：如“两轮全程有产物，机器自测全绿；人工实测待打分人补测”}）
+> 取证子代理：`{evidence_subagent_id}`；红队子代理：`{redteam_subagent_id}`；两份回报：`{evidence_report_path}` / `{redteam_report_path}`
 > 本技能交付：`rubrics1..N.json`（本批次 rubric 原文）与本文件。下游配套文件由 vibe-evals-scoring 生成：`人工打分文档.md`、`预打分.md`、`rubrics-{X}.json`、`反馈报告.md`、`rubrics打分热力图.html`。
 > 口吻规范（见 SKILL.md「文字口吻与真实性」）：总体结论、口径问题、修改策略、考察意图/依据来源/判分要点全部先读材料再写，短句事实结论，禁止模板腔/AI话。
 

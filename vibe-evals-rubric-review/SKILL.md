@@ -7,7 +7,7 @@ description: Use when reviewing Vibe Evals multi-turn task-package rubrics again
 
 ## Overview
 
-读题包 rubrics + prompt，做三源核验（prompt 预期 → 模型效果 → 出题人思考），产出新 rubrics json（默认与基线逐字节一致）+ 《对每条rubric的理解.md》（含裁定口径）；本技能可独立运行，也是 vibe-evals-scoring 的前置。
+读题包 rubrics + prompt，做三源核验（prompt 预期 → 模型效果 → 出题人思考），产出新 rubrics json（默认与基线逐字节一致）+ 《对每条rubric的理解.md》（含裁定口径）；本技能可独立运行，也是 vibe-evals-scoring 的前置。证据收集走独立子代理，取证回报后再走一次独立红队复核。
 
 
 ## 前置条件（MANDATORY，任何材料收集前执行）
@@ -37,6 +37,7 @@ Windows 下 `~` 即 `%USERPROFILE%`（如 `%USERPROFILE%\.claude\skills\...`）�
 1. **轮次记录目录**：`{题}轮次记录/`，内含：
    - `prompt.md` — 题目各轮 prompt（MANDATORY，缺则停）
    - rubrics 基线判定（按优先级）：`合并rubrics*.json` → 无则 `rubrics*.json` → 再 `原rubrics*.json`（MANDATORY，全无则停）
+   - `baseline_rubrics.json` — Baseline 门禁条目（可选；数组，`item_id` 必须引用完整 rubrics；用于下游 Baseline 未通过与 `【成败问题】`，不替代完整 rubrics）
    - `{X}模型对话记录.json` — CodeBuddy 导出（每个模型一个，命名 `{X}模型对话记录.json`）
    - `记录.txt` — 评测人人工记录（可选，存在时其内容为**权威人工意见**）
    - `R1/`、`R2/`… 每轮每模型快照子目录（`R1/{X}/{题}-{X}/...`）
@@ -49,18 +50,20 @@ Windows 下 `~` 即 `%USERPROFILE%`（如 `%USERPROFILE%\.claude\skills\...`）�
 
 ### MANDATORY 纪律（贯穿全流程）
 
-1. **主会话不读模型源码**——涉及模型源码或产物的证据收集使用 Codex `spawn_agent` 子智能体；主会话只接收结构化回报。若模型数超过可用并发槽位，按模型分批派发，仍保持每模型独立取证；
+1. **主会话不读模型源码**——涉及模型源码或产物的证据收集使用宿主可用的子代理工具（例如 DSH：`subagent` / `subagent_fork`；Codex：`spawn_agent`）；主会话只接收结构化回报。若模型数超过可用并发槽位，按模型分批派发，仍保持每模型独立取证。**宿主没有等价子代理能力时，停止并询问用户；不得用主会话阅读替代子代理取证，也不得把“没有 spawn_agent”当作跳过理由。**
 2. **打分依据必须 file:line 或实测结果**——任何 0/1 判定必须引用具体文件行号或实测输出，不允许“看起来像是实现了”；
 3. **机器不擅自裁定判分口径**——遇到需人拍板的判分问题，产出“待裁定项”（附证据+建议口径）供人工裁定，不自行定论；
 4. **兜底 0 分规则**：无输出产物 / 几乎未实现 prompt 重要实现 → 该模型总体 0 分（写进报告，不逐条打分）；
 5. **0/1 二值、每条 1 分、无权重**（Must have / Nice to have 仅作元数据，不参与加权）；
 6. **“未经纠正时”语义** = 以模型当轮自主产出为准（未经评测方纠正即正确才得分）；
 7. **不碰原文件**：新 rubric 写新文件；原 rubrics 与金标准产物永不修改，仅本技能自产文件（rubrics1..N.json、对每条rubric的理解.md）可写；
-8. **Python 环境**：Windows 下 `python` 不可用时用 `py` 启动器（`py -c "..."`），绝不因此中断。
+8. **Python 环境**：Windows 下 `python` 不可用时用 `py` 启动器（`py -c "..."`），绝不因此中断；
+9. **取证后必须红队复核**——每个模型的取证子代理回报完成后，再派一个独立红队子代理挑战该回报；红队回报与取证回报同时存在，才允许进入逐条理解定稿。红队的“反对/存疑”不得静默写入结论，必须登记为待裁定或二次取证。宿主无等价子代理能力时停止询问，不得主会话替代。
 
 ### 交稿前检查（全部通过才交稿，通用条目，以文末完整清单为准）
 
 - [ ] （技能专属检查项，见文末）
+- [ ] 每模型取证子代理 + 红队子代理 id/回报路径齐全
 - [ ] 输出文件齐全，路径与命名符合模板
 - [ ] 理解md 与 rubrics JSON 的 id、criterion、数量一致；若文档引用了分数，再核对分数与其来源一致
 - [ ] 待裁定项全部登记（编号+证据+建议口径）
@@ -72,7 +75,7 @@ Windows 下 `~` 即 `%USERPROFILE%`（如 `%USERPROFILE%\.claude\skills\...`）�
 按以下顺序通读全部材料：
 
 1. **prompt.md**：把各轮要求逐条列出——轮次结构（共几轮、每轮主题）+ 每轮显式要求清单（该轮 prompt 对模型提出的每条要求，逐条编号），作为 Phase 2 对照查缺的基准；
-2. **基线 rubrics**：读基线 rubrics json，记录条数、id 规律（如 `R1-09` 的轮次-序号规则）、各字段值域（criterion / round / priority / dimension / necessity / type 等字段的实际取值）；
+2. **基线 rubrics**：读基线 rubrics json，记录条数、id 规律（如 `R1-09` 的轮次-序号规则）、各字段值域（criterion / round / priority / dimension / necessity / type 等字段的实际取值）；若同目录有 `baseline_rubrics.json`，另记其 `item_id` 与字段，作为 Baseline 门禁条目，不替代完整 rubrics；
 3. **记录.txt**（若有）：通读，其内容为权威人工意见，后续引用时标注来源；
 4. **rubrics说明.xlsx**（若有）：用 `py` + openpyxl 解析（如 `py -c "import openpyxl; wb = openpyxl.load_workbook(r'...'); ..."`），提取字段语义（id / section / round / criterion / type / necessity / priority / dimension / source 各字段含义）；
 5. **上批次《对每条rubric的理解.md》**（若有）：通读，供 Phase 3 生成 ID 映射与 Phase 4 历史教训对照。
@@ -81,7 +84,16 @@ Windows 下 `~` 即 `%USERPROFILE%`（如 `%USERPROFILE%\.claude\skills\...`）�
 
 来源优先级：**prompt 预期 → 模型效果 → 出题人思考**。每条 criterion 的立身依据必须回落到三源之一。“出题人思考”只能来自用户明确说明、`记录.txt` 或其他已提供材料，不得由机器推断隐藏考点。
 
-**证据收集方式**：涉及读模型源码/产物的核验使用 `spawn_agent` 派发子智能体；回报格式固定为「条目 id | 证据位置（file:line 或实测输出）| 结论」。主会话只汇总回报，不读源码。用 `wait_agent` 等待完成；模型数超过并发上限时分批派发，不合并不同模型的证据责任。
+**证据收集方式**：涉及读模型源码/产物的核验使用宿主可用的子代理工具（例如 DSH：`subagent` / `subagent_fork`；Codex：`spawn_agent`）派发子智能体；回报格式固定为「条目 id | 证据位置（file:line 或实测输出）| 结论」。主会话只汇总回报，不读源码。用宿主可用的等待机制（如 DSH：`list_agents` / `send_message`；Codex：`wait_agent`）等待完成；模型数超过并发上限时分批派发，不合并不同模型的证据责任。宿主无等价子代理能力时停止询问，不得主会话替代。
+
+### 2.0 红队复核（MANDATORY，取证回报完成后、逐条定稿前）
+
+- 每个模型的取证回报完成后，**再派一个独立红队子代理**（必须与取证子代理不同 id）；红队不看主会话的判断，只看题面、rubrics、模型产物、取证回报和已冻结证据。可用 [`../vibe-evals-scoring/templates/红队复核子智能体prompt模板.md`](../vibe-evals-scoring/templates/红队复核子智能体prompt模板.md)；若该模板未随装，按本节协议内联派发。红队回报建议落盘 `红队复核/{模型}.md`，路径写进理解md 头部。
+- 红队逐条挑战：证据位置是否真实、坐标/行号是否对应、是否把候选点当既有站、是否漏掉反例、是否把“看见”写成“实测”、是否跨条重复扣分、置信度是否虚高；每条给 `同意 / 反对 / 存疑`，反对或存疑必须附新证据。
+- 红队不得修改模型产物、rubrics、理解md 或任何评分文档；只写自己的复核回报。
+- 对红队“反对/存疑”项逐项回应（采纳/不采纳 + 证据）；不采纳也要写理由，不能静默略过。
+- **Gate**：每模型必须有 `evidence_subagent_id`、`redteam_subagent_id`、两份结构化回报路径，且全部 rubric 条目均有红队意见；缺任一项不得进入逐条理解定稿。红队“反对/存疑”项登记为待裁定或二次取证，不得静默改判。
+- 宿主无等价子代理能力时停止询问；不得用主会话阅读替代红队。
 
 ### 2.1 废话检测
 
@@ -154,6 +166,8 @@ Windows 下 `~` 即 `%USERPROFILE%`（如 `%USERPROFILE%\.claude\skills\...`）�
 ## 交稿前检查（全部通过才交稿）
 
 - [ ] 说明性文字已按「文字口吻与真实性」自检（读材料写、无模板腔/AI话）
+- [ ] **每模型有独立取证子代理 id、红队子代理 id、两份结构化回报；红队“反对/存疑”已登记/二次取证，没有静默改判**
+- [ ] 有 `baseline_rubrics.json` 时，item_id 与完整 rubrics 对账，未混入/替代完整条目
 - [ ] 新 rubrics 与基线逐字节 diff 一致（或用户批准差异清单）
 - [ ] 理解md 每条 rubric 全覆盖（逐条 id 对账）
 - [ ] 裁定项证据完整
